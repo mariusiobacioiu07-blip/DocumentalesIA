@@ -43,13 +43,15 @@ small{color:var(--mut)}
 <label>Prompt / tema del documental</label>
 <textarea id="topic" placeholder="Ej: La caída del Imperio romano"></textarea>
 <div class="row">
-<div><label>Minutos</label><input id="min" type="number" value="10" min="1" max="30"></div>
+<div><label>Duración</label><select id="min"><option value="0.5" selected>30 segundos (prueba)</option><option value="1">1 minuto</option><option value="2">2 minutos</option><option value="5">5 minutos</option><option value="10">10 minutos</option><option value="15">15 minutos</option><option value="20">20 minutos</option></select></div>
 <div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
 </div>
 <div class="row">
 <div><label>Voz</label><select id="voice"><option value="0">Femenina</option><option value="1">Masculina</option></select></div>
 <div><label>Imágenes</label><select id="vis"><option value="stock">Stock libre + IA de respaldo</option><option value="ai">Solo IA</option></select></div>
 </div>
+<label>Formato</label>
+<select id="fmt"><option value="h">Horizontal 16:9 (YouTube)</option><option value="v">Vertical 9:16 (Shorts, TikTok, Reels)</option></select>
 <label>Música de fondo (opcional, tu propio archivo libre de derechos)</label>
 <input id="mus" type="file" accept="audio/*">
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
@@ -71,7 +73,7 @@ small{color:var(--mut)}
 
 <script>
 const $=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const fj=async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,60));return r};
+const fj=async(u,o={})=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),90000);try{const r=await fetch(u,{...o,signal:c.signal});if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,60));return r}finally{clearTimeout(t)}};
 const LLMS=[
  {id:'gemini',name:'Gemini',type:'gemini',model:'gemini-2.0-flash'},
  {id:'groq',name:'Groq',url:'https://api.groq.com/openai/v1/chat/completions',model:'llama-3.3-70b-versatile'},
@@ -145,9 +147,9 @@ const parseArr=t=>JSON.parse(t.slice(t.indexOf('['),t.lastIndexOf(']')+1));
 // ---------- Imágenes IA ----------
 async function imgFrom(p,prompt,seed){
  let r;
- if(p.id==='pollinations')r=await fj(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1280&height=720&nologo=true&seed=${seed}`);
+ if(p.id==='pollinations')r=await fj(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${isV()?720:1280}&height=${isV()?1280:720}&nologo=true&seed=${seed}`);
  else if(p.id==='together'){
-  const j=await(await fj('https://api.together.xyz/v1/images/generations',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.together},body:JSON.stringify({model:'black-forest-labs/FLUX.1-schnell-Free',prompt,width:1024,height:576,steps:4,n:1,response_format:'b64_json'})})).json();
+  const j=await(await fj('https://api.together.xyz/v1/images/generations',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.together},body:JSON.stringify({model:'black-forest-labs/FLUX.1-schnell-Free',prompt,width:isV()?576:1024,height:isV()?1024:576,steps:4,n:1,response_format:'b64_json'})})).json();
   return await(await fetch('data:image/jpeg;base64,'+j.data[0].b64_json)).blob();
  }else r=await fj('https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.huggingface},body:JSON.stringify({inputs:prompt})});
  const b=await r.blob();if(!b.type.startsWith('image'))throw new Error('500 no es imagen');return b;
@@ -165,17 +167,17 @@ async function makeImg(prompt,seed){
 }
 
 // ---------- Stock libre ----------
-const used=new Set(),pick=a=>a.find(x=>!used.has(x.url))||a[0],enc=encodeURIComponent;
+const isV=()=>$('fmt').value==='v',used=new Set(),pick=a=>a.find(x=>!used.has(x.url))||a[0],enc=encodeURIComponent;
 const STOCK=[
  {id:'pexels-video',key:'pexels',f:async q=>{
-  const j=await(await fj('https://api.pexels.com/videos/search?per_page=6&orientation=landscape&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
-  const a=j.videos.map(v=>{const f=v.video_files.filter(f=>f.file_type==='video/mp4'&&f.width>=640&&f.width<=1920).sort((a,b)=>Math.abs(a.width-1000)-Math.abs(b.width-1000))[0];return f&&{t:'vid',url:f.link,credit:'Pexels – '+v.user.name}}).filter(Boolean);
+  const j=await(await fj('https://api.pexels.com/videos/search?per_page=6&orientation='+(isV()?'portrait':'landscape')+'&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
+  const M=f=>Math.max(f.width,f.height),a=j.videos.map(v=>{const f=v.video_files.filter(f=>f.file_type==='video/mp4'&&M(f)>=640&&M(f)<=1920).sort((a,b)=>Math.abs(M(a)-1000)-Math.abs(M(b)-1000))[0];return f&&{t:'vid',url:f.link,credit:'Pexels – '+v.user.name}}).filter(Boolean);
   return a.length?pick(a):null}},
  {id:'pexels-foto',key:'pexels',f:async q=>{
-  const j=await(await fj('https://api.pexels.com/v1/search?per_page=6&orientation=landscape&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
+  const j=await(await fj('https://api.pexels.com/v1/search?per_page=6&orientation='+(isV()?'portrait':'landscape')+'&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,credit:'Pexels – '+p.photographer}))):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
-  const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=horizontal&safesearch=true&per_page=6&q=`+enc(q))).json();
+  const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
   return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,credit:'Pixabay – '+h.user}))):null}},
  {id:'wikimedia',f:async q=>{
   const j=await(await fj('https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1280&gsrsearch='+enc(q+' filetype:bitmap'))).json();
@@ -189,7 +191,7 @@ async function getMedia(s,k){
   try{
    const m=await p.f(s.q);if(!m)continue;used.add(m.url);
    const b=await(await fj(m.url)).blob();
-   if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.src=URL.createObjectURL(b);await new Promise((r,j)=>{v.onloadeddata=r;v.onerror=j});return{v,credit:m.credit}}
+   if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.src=URL.createObjectURL(b);await Promise.race([new Promise((r,j)=>{v.onloadeddata=r;v.onerror=j}),sleep(8000).then(()=>{throw new Error('video timeout')})]);return{v,credit:m.credit}}
    return{img:await createImageBitmap(b),credit:m.credit};
   }catch(e){log('✗ '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadS.add(p.id)}
  }
@@ -221,10 +223,10 @@ let music=null;
 $('mus').onchange=async e=>{try{music=e.target.files[0]?await ctx.decodeAudioData(await e.target.files[0].arrayBuffer()):null;log('Música cargada')}catch(_){music=null;log('No se pudo leer la música')}};
 
 // ---------- Generación ----------
-let scenes=[],title='';
+let scenes=[],title='',cancel=false;
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
- title=topic.slice(0,60);
+ title=topic.slice(0,60);cancel=false;ctx.resume();
  $('go').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());prog(0);
  const total=Math.round(+$('min').value*6),L=$('lang').value==='es-ES'?'español':'English';
  try{
@@ -237,10 +239,10 @@ $('go').onclick=async()=>{
    prog(0.2*e/total);
   }
   log(`Guion listo: ${scenes.length} escenas. Buscando imágenes/video y generando voz…`);
-  await ctx.resume();
   let idx=0,done=0;
-  const worker=async()=>{while(idx<scenes.length){const k=idx++,s=scenes[k];[s.m,s.a]=await Promise.all([getMedia(s,k+Date.now()%1000),tts(s.n)]);done++;prog(0.2+0.8*done/scenes.length);if(done%5===0)log(`escenas ${done}/${scenes.length}`)}};
+  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];[s.m,s.a]=await Promise.all([getMedia(s,k+Date.now()%1000),tts(s.n)]);done++;prog(0.2+0.8*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.m.credit||'imagen IA'}${s.a?'':' (sin voz)'}`)}};
   await Promise.all([worker(),worker()]);
+  if(cancel)throw new Error('Cancelado');
   let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.5;s.st=t;t+=s.dur});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
@@ -250,7 +252,10 @@ $('go').onclick=async()=>{
 };
 
 // ---------- Edición / render ----------
-const cv=$('cv'),cx=cv.getContext('2d'),W=1280,H=720,X=0.9;let stopF=false,total=0;
+let W=1280,H=720;const cv=$('cv'),cx=cv.getContext('2d'),X=0.9;let stopF=false,total=0;
+function setFmt(){const v=isV();W=v?720:1280;H=v?1280:720;cv.width=W;cv.height=H;cv.style.maxWidth=v?'340px':'none';cv.style.margin='0 auto'}
+$('fmt').onchange=()=>{setFmt();if(scenes.length&&scenes[0].m)render(0)};
+setFmt();
 function wrap(t,w){const o=[];let l='';for(const wd of t.split(' ')){const m=l+wd+' ';if(cx.measureText(m).width>w&&l){o.push(l);l=wd+' '}else l=m}o.push(l);return o}
 function drawM(s,t,i){
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
@@ -265,29 +270,29 @@ function render(T){
  scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i);if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
- if($('sub').checked&&cur){cx.font='bold 32px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(cur.n,1100),y0=($('lb').checked?640:690)-ls.length*42;
-  cx.fillStyle='rgba(0,0,0,.55)';cx.fillRect(60,y0-32,1160,ls.length*42+16);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l.trim(),640,y0+k*42))}
- if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.fillStyle='#e8c15a';cx.fillRect(80,100,6,52);cx.fillStyle='#fff';cx.font='bold 44px Georgia,serif';cx.textAlign='left';cx.fillText(title,100,142);cx.globalAlpha=1}
- if($('lb').checked){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
+ if($('sub').checked&&cur){const fs=W>H?32:38,lh=fs*1.3;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(cur.n,W-140),y0=(W>H?($('lb').checked?640:690):H-260)-ls.length*lh;
+  cx.fillStyle='rgba(0,0,0,.55)';cx.fillRect(40,y0-fs,W-80,ls.length*lh+16);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l.trim(),W/2,y0+k*lh))}
+ if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.font='bold '+(W>H?44:40)+'px Georgia,serif';cx.textAlign='left';const tl=wrap(title,W-180),ty=W>H?142:200;cx.fillStyle='#e8c15a';cx.fillRect(80,ty-42,6,tl.length*50-8);cx.fillStyle='#fff';tl.forEach((l,k)=>cx.fillText(l.trim(),100,ty+k*50));cx.globalAlpha=1}
+ if($('lb').checked&&W>H){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
  if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
 }
 async function run(rec){
- stopF=false;await ctx.resume();total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
+ stopF=false;await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
  const dest=ctx.createMediaStreamDestination(),vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
  vg.connect(ctx.destination);vg.connect(dest);
  scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+s.st);srcs.push(n)}});
  if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(ctx.destination);mg.connect(dest);n.start(t0);srcs.push(n)}
  let mr,ch=[];
- if(rec){const mt=MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')?'video/webm;codecs=vp9,opus':'video/webm';
+ if(rec){const mt=['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
   mr.ondataavailable=e=>ch.push(e.data);mr.start(1000)}
  await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0;if(stopF||T>total)return res();render(Math.max(0,T));requestAnimationFrame(f)};f()});
  srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());
- if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download='documental-ia.webm';a.click()}
+ if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');const mp=mr.mimeType.includes('mp4');a.href=URL.createObjectURL(new Blob(ch,{type:mr.mimeType}));a.download='documental-ia.'+(mp?'mp4':'webm');a.click()}
 }
 $('play').onclick=()=>run(false);
 $('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Video exportado.'))};
-$('stop').onclick=()=>{stopF=true};
+$('stop').onclick=()=>{stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 </script>
 </body>
 </html>
