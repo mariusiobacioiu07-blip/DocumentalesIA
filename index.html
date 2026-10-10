@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentales IA</title>
+<style>
+:root{--bg:#f6f6f4;--fg:#1c1c1a;--card:#fff;--bd:#d9d9d4;--ac:#5b4bdb;--mut:#6b6b66}
+@media(prefers-color-scheme:dark){:root{--bg:#161615;--fg:#eeeeea;--card:#222220;--bd:#3a3a36;--ac:#8b7dff;--mut:#9a9a94}}
+*{box-sizing:border-box}
+body{margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif;padding:14px;max-width:760px}
+h1{font-size:20px;margin:6px 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}
+input,textarea,select{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+textarea{min-height:80px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--fg);margin-top:10px}.chk input{width:auto}
+button{padding:10px 14px;border:0;border-radius:8px;background:var(--ac);color:#fff;font:inherit;font-weight:600;margin:8px 6px 0 0}
+button.s{background:transparent;color:var(--fg);border:1px solid var(--bd)}
+button:disabled{opacity:.5}
+canvas{width:100%;border-radius:10px;background:#000;display:block}
+#log{font:12px/1.5 ui-monospace,monospace;max-height:180px;overflow:auto;white-space:pre-wrap;color:var(--mut)}
+#bar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin-top:8px}
+#bar i{display:block;height:100%;width:0;background:var(--ac)}
+summary{cursor:pointer;font-weight:600}
+small{color:var(--mut)}
+#cred{min-height:60px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>🎬 Documentales IA</h1>
+
+<div class="card">
+<details>
+<summary>Claves API (opcionales; se guardan solo en tu navegador)</summary>
+<small>Sin claves funcionan Pollinations (texto, voz, imagen) y Wikimedia. Con claves mejora mucho: Pexels (fotos y videos gratis), Pixabay, Gemini (texto y voz), ElevenLabs (voz). Si un proveedor se agota, pasa al siguiente.</small>
+<div id="keys"></div>
+</details>
+</div>
+
+<div class="card">
+<label>Prompt / tema del documental</label>
+<textarea id="topic" placeholder="Ej: La caída del Imperio romano"></textarea>
+<div class="row">
+<div><label>Minutos</label><input id="min" type="number" value="10" min="1" max="30"></div>
+<div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
+</div>
+<div class="row">
+<div><label>Voz</label><select id="voice"><option value="0">Femenina</option><option value="1">Masculina</option></select></div>
+<div><label>Imágenes</label><select id="vis"><option value="stock">Stock libre + IA de respaldo</option><option value="ai">Solo IA</option></select></div>
+</div>
+<label>Música de fondo (opcional, tu propio archivo libre de derechos)</label>
+<input id="mus" type="file" accept="audio/*">
+<label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
+<label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
+<button id="go">Generar</button>
+<div id="bar"><i></i></div>
+<div id="log"></div>
+</div>
+
+<div class="card">
+<canvas id="cv" width="1280" height="720"></canvas>
+<button id="play" class="s" disabled>▶ Reproducir</button>
+<button id="rec" class="s" disabled>⬇ Exportar (.webm con voz)</button>
+<button id="stop" class="s">■ Parar</button>
+<br><small>La exportación dura lo mismo que el video. No cambies de pestaña mientras graba.</small>
+<label>Créditos (pégalos en la descripción)</label>
+<textarea id="cred" readonly></textarea>
+</div>
+
+<script>
+const $=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const fj=async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,60));return r};
+const LLMS=[
+ {id:'gemini',name:'Gemini',type:'gemini',model:'gemini-2.0-flash'},
+ {id:'groq',name:'Groq',url:'https://api.groq.com/openai/v1/chat/completions',model:'llama-3.3-70b-versatile'},
+ {id:'cerebras',name:'Cerebras',url:'https://api.cerebras.ai/v1/chat/completions',model:'llama-3.3-70b'},
+ {id:'mistral',name:'Mistral',url:'https://api.mistral.ai/v1/chat/completions',model:'mistral-small-latest'},
+ {id:'openrouter',name:'OpenRouter',url:'https://openrouter.ai/api/v1/chat/completions',model:'meta-llama/llama-3.3-70b-instruct:free'},
+ {id:'pollinations',name:'Pollinations texto',nokey:1,url:'https://text.pollinations.ai/openai',model:'openai'}
+];
+const IMGS=[{id:'together'},{id:'huggingface'},{id:'pollinations',nokey:1}];
+const KEYIDS=['pexels','pixabay','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
+let keys={};try{keys=JSON.parse(localStorage.getItem('vidia_keys')||'{}')}catch(e){}
+$('keys').innerHTML=KEYIDS.map(k=>`<label>${k}</label><input data-k="${k}" type="password" value="${keys[k]||''}" autocomplete="off">`).join('');
+$('keys').oninput=e=>{keys[e.target.dataset.k]=e.target.value.trim();try{localStorage.setItem('vidia_keys',JSON.stringify(keys))}catch(_){}};
+const log=t=>{const l=$('log');l.textContent+=t+'\n';l.scrollTop=l.scrollHeight};
+const prog=p=>$('bar').firstElementChild.style.width=(p*100)+'%';
+const deadT=new Set(),deadI=new Set(),deadS=new Set(),deadA=new Set(),fatal=m=>/^(401|402|403|429)/.test(m);
+
+// ---------- Guion ----------
+async function callLLM(p,prompt){
+ if(p.type==='gemini'){
+  const j=await(await fj(`https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
+  return j.candidates[0].content.parts[0].text;
+ }
+ const h={'Content-Type':'application/json'};if(keys[p.id])h.Authorization='Bearer '+keys[p.id];
+ const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:p.model,messages:[{role:'user',content:prompt}],temperature:0.8})})).json();
+ return j.choices[0].message.content;
+}
+async function llm(prompt){
+ for(const p of LLMS){
+  if(deadT.has(p.id)||(!p.nokey&&!keys[p.id]))continue;
+  try{const t=await callLLM(p,prompt);log('✓ texto: '+p.name);return t}
+  catch(e){log('✗ '+p.name+': '+e.message.slice(0,50));if(fatal(e.message))deadT.add(p.id)}
+ }
+ throw new Error('Fallaron todos los proveedores de texto');
+}
+const parseArr=t=>JSON.parse(t.slice(t.indexOf('['),t.lastIndexOf(']')+1));
+
+// ---------- Imágenes IA ----------
+async function imgFrom(p,prompt,seed){
+ let r;
+ if(p.id==='pollinations')r=await fj(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1280&height=720&nologo=true&seed=${seed}`);
+ else if(p.id==='together'){
+  const j=await(await fj('https://api.together.xyz/v1/images/generations',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.together},body:JSON.stringify({model:'black-forest-labs/FLUX.1-schnell-Free',prompt,width:1024,height:576,steps:4,n:1,response_format:'b64_json'})})).json();
+  return await(await fetch('data:image/jpeg;base64,'+j.data[0].b64_json)).blob();
+ }else r=await fj('https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.huggingface},body:JSON.stringify({inputs:prompt})});
+ const b=await r.blob();if(!b.type.startsWith('image'))throw new Error('500 no es imagen');return b;
+}
+async function makeImg(prompt,seed){
+ for(const p of IMGS){
+  if(deadI.has(p.id)||(!p.nokey&&!keys[p.id]))continue;
+  for(let a=0;a<2;a++){
+   try{return await createImageBitmap(await imgFrom(p,prompt,seed))}
+   catch(e){if(e.message.startsWith('429')&&!a){await sleep(5000);continue}log('✗ imagen '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadI.add(p.id);break}
+  }
+ }
+ const c=document.createElement('canvas');c.width=1280;c.height=720;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1280,720);
+ g.addColorStop(0,'#2b2468');g.addColorStop(1,'#0f6b78');x.fillStyle=g;x.fillRect(0,0,1280,720);return await createImageBitmap(c);
+}
+
+// ---------- Stock libre ----------
+const used=new Set(),pick=a=>a.find(x=>!used.has(x.url))||a[0],enc=encodeURIComponent;
+const STOCK=[
+ {id:'pexels-video',key:'pexels',f:async q=>{
+  const j=await(await fj('https://api.pexels.com/videos/search?per_page=6&orientation=landscape&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
+  const a=j.videos.map(v=>{const f=v.video_files.filter(f=>f.file_type==='video/mp4'&&f.width>=640&&f.width<=1920).sort((a,b)=>Math.abs(a.width-1000)-Math.abs(b.width-1000))[0];return f&&{t:'vid',url:f.link,credit:'Pexels – '+v.user.name}}).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'pexels-foto',key:'pexels',f:async q=>{
+  const j=await(await fj('https://api.pexels.com/v1/search?per_page=6&orientation=landscape&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
+  return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,credit:'Pexels – '+p.photographer}))):null}},
+ {id:'pixabay',key:'pixabay',f:async q=>{
+  const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=horizontal&safesearch=true&per_page=6&q=`+enc(q))).json();
+  return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,credit:'Pixabay – '+h.user}))):null}},
+ {id:'wikimedia',f:async q=>{
+  const j=await(await fj('https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1280&gsrsearch='+enc(q+' filetype:bitmap'))).json();
+  const a=Object.values((j.query||{}).pages||{}).map(p=>{const i=p.imageinfo&&p.imageinfo[0],m=i&&i.extmetadata,l=m&&m.LicenseShortName&&m.LicenseShortName.value;
+   return l&&/CC0|public domain|CC BY/i.test(l)&&{t:'img',url:i.thumburl,credit:'Wikimedia Commons – '+((m.Artist&&m.Artist.value)||'').replace(/<[^>]+>/g,'').slice(0,50)+' ('+l+')'}}).filter(Boolean);
+  return a.length?pick(a):null}}
+];
+async function getMedia(s,k){
+ if($('vis').value==='stock')for(const p of STOCK){
+  if(deadS.has(p.id)||(p.key&&!keys[p.key]))continue;
+  try{
+   const m=await p.f(s.q);if(!m)continue;used.add(m.url);
+   const b=await(await fj(m.url)).blob();
+   if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.src=URL.createObjectURL(b);await new Promise((r,j)=>{v.onloadeddata=r;v.onerror=j});return{v,credit:m.credit}}
+   return{img:await createImageBitmap(b),credit:m.credit};
+  }catch(e){log('✗ '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadS.add(p.id)}
+ }
+ return{img:await makeImg(s.i+', cinematic documentary photo',k)};
+}
+
+// ---------- Voz natural ----------
+const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','pNInz6obpgDQGcFmaJgB'],gm:['Kore','Charon'],pl:['nova','onyx']};
+const TTS=[
+ {id:'elevenlabs',key:'elevenlabs',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2'})})).arrayBuffer())},
+ {id:'gemini',key:'gemini',f:async(t,v)=>{
+  const j=await(await fj('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Di con tono sereno de documental: '+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
+  const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
+  for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|bin.charCodeAt(2*i+1)<<8;if(x>32767)x-=65536;d[i]=x/32768}return buf}},
+ {id:'pollinations',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://text.pollinations.ai/'+enc(t)+'?model=openai-audio&voice='+VO.pl[v])).arrayBuffer())}
+];
+async function tts(t){
+ const v=+$('voice').value;
+ for(const p of TTS){
+  if(deadA.has(p.id)||(p.key&&!keys[p.key]))continue;
+  for(let a=0;a<2;a++){
+   try{return await p.f(t,v)}
+   catch(e){if(e.message.startsWith('429')&&!a){await sleep(6000);continue}log('✗ voz '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadA.add(p.id);break}
+  }
+ }
+ return null;
+}
+let music=null;
+$('mus').onchange=async e=>{try{music=e.target.files[0]?await ctx.decodeAudioData(await e.target.files[0].arrayBuffer()):null;log('Música cargada')}catch(_){music=null;log('No se pudo leer la música')}};
+
+// ---------- Generación ----------
+let scenes=[],title='';
+$('go').onclick=async()=>{
+ const topic=$('topic').value.trim();if(!topic)return;
+ title=topic.slice(0,60);
+ $('go').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());prog(0);
+ const total=Math.round(+$('min').value*6),L=$('lang').value==='es-ES'?'español':'English';
+ try{
+  for(let s=0;s<total;s+=10){
+   const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video de archivo: 2 a 4 palabras en inglés, concretas y visuales) e "i" (prompt detallado en inglés para generar una imagen, sin texto). Sin markdown.`;
+   let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
+   if(!arr)throw new Error('No se pudo obtener el guion');
+   arr.forEach(o=>scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60)}));
+   prog(0.2*e/total);
+  }
+  log(`Guion listo: ${scenes.length} escenas. Buscando imágenes/video y generando voz…`);
+  await ctx.resume();
+  let idx=0,done=0;
+  const worker=async()=>{while(idx<scenes.length){const k=idx++,s=scenes[k];[s.m,s.a]=await Promise.all([getMedia(s,k+Date.now()%1000),tts(s.n)]);done++;prog(0.2+0.8*done/scenes.length);if(done%5===0)log(`escenas ${done}/${scenes.length}`)}};
+  await Promise.all([worker(),worker()]);
+  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.5;s.st=t;t+=s.dur});
+  $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
+  log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
+  $('play').disabled=$('rec').disabled=false;render(0);
+ }catch(e){log('❌ '+e.message)}
+ $('go').disabled=false;
+};
+
+// ---------- Edición / render ----------
+const cv=$('cv'),cx=cv.getContext('2d'),W=1280,H=720,X=0.9;let stopF=false,total=0;
+function wrap(t,w){const o=[];let l='';for(const wd of t.split(' ')){const m=l+wd+' ';if(cx.measureText(m).width>w&&l){o.push(l);l=wd+' '}else l=m}o.push(l);return o}
+function drawM(s,t,i){
+ const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
+ const b=Math.max(W/sw,H/sh),md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0,w=sw*b*z,h=sh*b*z;
+ cx.drawImage(src,(W-w)/2+px,(H-h)/2,w,h);
+}
+function render(T){
+ const A=[];scenes.forEach((s,i)=>{if(T>=s.st-(i?X:0)&&T<=s.st+s.dur)A.push(i)});
+ cx.fillStyle='#000';cx.fillRect(0,0,W,H);cx.filter='contrast(1.06) saturate(1.1)';
+ for(const i of A){const s=scenes[i],o=i?X:0;cx.globalAlpha=i?Math.min(1,(T-s.st+X)/X):1;drawM(s,Math.min(1,Math.max(0,(T-s.st+o)/(s.dur+o))),i)}
+ cx.globalAlpha=1;cx.filter='none';
+ scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i);if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
+ const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
+ const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
+ if($('sub').checked&&cur){cx.font='bold 32px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(cur.n,1100),y0=($('lb').checked?640:690)-ls.length*42;
+  cx.fillStyle='rgba(0,0,0,.55)';cx.fillRect(60,y0-32,1160,ls.length*42+16);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l.trim(),640,y0+k*42))}
+ if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.fillStyle='#e8c15a';cx.fillRect(80,100,6,52);cx.fillStyle='#fff';cx.font='bold 44px Georgia,serif';cx.textAlign='left';cx.fillText(title,100,142);cx.globalAlpha=1}
+ if($('lb').checked){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
+ if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
+}
+async function run(rec){
+ stopF=false;await ctx.resume();total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
+ const dest=ctx.createMediaStreamDestination(),vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
+ vg.connect(ctx.destination);vg.connect(dest);
+ scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+s.st);srcs.push(n)}});
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(ctx.destination);mg.connect(dest);n.start(t0);srcs.push(n)}
+ let mr,ch=[];
+ if(rec){const mt=MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')?'video/webm;codecs=vp9,opus':'video/webm';
+  mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
+  mr.ondataavailable=e=>ch.push(e.data);mr.start(1000)}
+ await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0;if(stopF||T>total)return res();render(Math.max(0,T));requestAnimationFrame(f)};f()});
+ srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());
+ if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download='documental-ia.webm';a.click()}
+}
+$('play').onclick=()=>run(false);
+$('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Video exportado.'))};
+$('stop').onclick=()=>{stopF=true};
+</script>
+</body>
+</html>
