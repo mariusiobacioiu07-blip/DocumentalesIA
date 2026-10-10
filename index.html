@@ -47,8 +47,8 @@ small{color:var(--mut)}
 <div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
 </div>
 <div class="row">
-<div><label>Voz</label><select id="voice"><option value="0">Femenina</option><option value="1">Masculina</option></select></div>
-<div><label>Imágenes</label><select id="vis"><option value="stock">Stock libre + IA de respaldo</option><option value="ai">Solo IA</option></select></div>
+<div><label>Voz</label><select id="voice"><option value="2" selected>Masculina grave (documental)</option><option value="1">Masculina</option><option value="0">Femenina</option></select></div>
+<div><label>Imágenes</label><select id="vis"><option value="mix">Mixto: stock + IA + gráficas</option><option value="stock">Solo stock (IA de respaldo)</option><option value="ai">Solo IA</option></select></div>
 </div>
 <label>Formato</label>
 <select id="fmt"><option value="h">Horizontal 16:9 (YouTube)</option><option value="v">Vertical 9:16 (Shorts, TikTok, Reels)</option></select>
@@ -186,7 +186,9 @@ const STOCK=[
   return a.length?pick(a):null}}
 ];
 async function getMedia(s,k){
- if($('vis').value==='stock')for(const p of STOCK){
+ const vm=$('vis').value;
+ if(s.c)return{};
+ if(vm==='stock'||(vm==='mix'&&s.t!=='ai'))for(const p of STOCK){
   if(deadS.has(p.id)||(p.key&&!keys[p.key]))continue;
   try{
    const m=await p.f(s.q);if(!m)continue;used.add(m.url);
@@ -195,15 +197,15 @@ async function getMedia(s,k){
    return{img:await createImageBitmap(b),credit:m.credit};
   }catch(e){log('✗ '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadS.add(p.id)}
  }
- return{img:await makeImg(s.i+', cinematic documentary photo',k)};
+ return{img:await makeImg(s.i+', cinematic documentary still, muted film color grading, 35mm, natural light',k)};
 }
 
 // ---------- Voz natural ----------
-const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','pNInz6obpgDQGcFmaJgB'],gm:['Kore','Charon'],pl:['nova','onyx']};
+const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','pNInz6obpgDQGcFmaJgB','pNInz6obpgDQGcFmaJgB'],gm:['Kore','Charon','Algenib'],pl:['nova','onyx','onyx']};
 const TTS=[
  {id:'elevenlabs',key:'elevenlabs',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2'})})).arrayBuffer())},
  {id:'gemini',key:'gemini',f:async(t,v)=>{
-  const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Di con tono sereno de documental: '+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
+  const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v>0?'Di con voz grave, pausada y envolvente de narrador de documental: ':'Di con tono sereno de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
   for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|bin.charCodeAt(2*i+1)<<8;if(x>32767)x-=65536;d[i]=x/32768}return buf}},
  {id:'pollinations',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://text.pollinations.ai/'+enc(t)+'?model=openai-audio&voice='+VO.pl[v])).arrayBuffer())}
@@ -216,6 +218,20 @@ async function tts(t){
    try{return await p.f(t,v)}
    catch(e){if(e.message.startsWith('429')&&!a){await sleep(6000);continue}log('✗ voz '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadA.add(p.id);break}
   }
+ }
+ return null;
+}
+async function voices(){
+ const v=+$('voice').value;
+ for(const p of TTS.filter(p=>!p.key||keys[p.key])){
+  log('Voz: '+p.id);let ok=true,idx=0,done=0;scenes.forEach(s=>s.a=null);
+  const w=async()=>{while(idx<scenes.length&&ok&&!cancel){
+   const s=scenes[idx++];let a=null;
+   for(let n=0;n<3&&!a&&ok&&!cancel;n++){try{a=await p.f(s.n,v)}catch(e){if(/^(401|402|403)/.test(e.message)){ok=false}else await sleep(6000*(n+1))}}
+   if(!a){if(ok&&!cancel)log('✗ voz '+p.id+' se agotó; rehago TODAS las voces con otro proveedor para mantener la misma voz');ok=false;break}
+   s.a=a;done++;prog(.6+.4*done/scenes.length);log(`voz ${done}/${scenes.length}`)}};
+  await Promise.all([w(),w()]);
+  if(ok&&!cancel)return p.id;
  }
  return null;
 }
@@ -232,17 +248,20 @@ $('go').onclick=async()=>{
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video de archivo: 2 a 4 palabras en inglés, concretas y visuales) e "i" (prompt detallado en inglés para generar una imagen, sin texto). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video de archivo: 2 a 4 palabras en inglés, concretas y visuales), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("stock" o "ai": usa "ai" en una de cada tres escenas aproximadamente, para conceptos abstractos, recreaciones históricas o cosas imposibles de fotografiar) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
-   arr.forEach(o=>scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60)}));
+   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),t:o.t,c:c&&c.v.length>1?c:null})});
    prog(0.2*e/total);
   }
   log(`Guion listo: ${scenes.length} escenas. Buscando imágenes/video y generando voz…`);
   let idx=0,done=0;
-  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];[s.m,s.a]=await Promise.all([getMedia(s,k+Date.now()%1000),tts(s.n)]);done++;prog(0.2+0.8*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.m.credit||'imagen IA'}${s.a?'':' (sin voz)'}`)}};
+  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMedia(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
   await Promise.all([worker(),worker()]);
   if(cancel)throw new Error('Cancelado');
+  log('Generando voz (una sola voz para todo el video)…');
+  const vp=await voices();if(cancel)throw new Error('Cancelado');
+  if(!vp){scenes.forEach(s=>s.a=null);log('⚠ No se pudo generar la voz; el video saldrá sin voz.')}
   let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.5;s.st=t;t+=s.dur});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
@@ -257,7 +276,19 @@ function setFmt(){const v=isV();W=v?720:1280;H=v?1280:720;cv.width=W;cv.height=H
 $('fmt').onchange=()=>{setFmt();if(scenes.length&&scenes[0].m)render(0)};
 setFmt();
 function wrap(t,w){const o=[];let l='';for(const wd of t.split(' ')){const m=l+wd+' ';if(cx.measureText(m).width>w&&l){o.push(l);l=wd+' '}else l=m}o.push(l);return o}
-function drawM(s,t,i){
+function drawChart(c,t){
+ const e=1-Math.pow(1-Math.min(1,t*2.5),3),V=c.v,n=V.length,mx=Math.max(...V,1)*1.1,x0=100,x1=W-70,y0=H*.24,y1=H*.78,fs=W>H?30:26;
+ const g=cx.createLinearGradient(0,0,W,H);g.addColorStop(0,'#0e1a30');g.addColorStop(1,'#1d2d4a');cx.fillStyle=g;cx.fillRect(0,0,W,H);
+ cx.textAlign='center';cx.fillStyle='#fff';cx.font='bold '+(fs+10)+'px system-ui,sans-serif';cx.fillText(c.t,W/2,y0-70);
+ cx.strokeStyle='rgba(255,255,255,.14)';cx.lineWidth=2;
+ for(let k=0;k<=4;k++){const y=y1-(y1-y0)*k/4;cx.beginPath();cx.moveTo(x0,y);cx.lineTo(x1,y);cx.stroke()}
+ const px=j=>x0+(x1-x0)*(c.k==='line'?j/(n-1):(j+.5)/n),py=j=>y1-(y1-y0)*V[j]/mx*e;
+ if(c.k==='line'){cx.strokeStyle='#e8c15a';cx.lineWidth=6;cx.beginPath();V.forEach((_,j)=>j?cx.lineTo(px(j),py(j)):cx.moveTo(px(j),py(j)));cx.stroke();cx.fillStyle='#e8c15a';V.forEach((_,j)=>{cx.beginPath();cx.arc(px(j),py(j),9,0,7);cx.fill()})}
+ else{const bw=(x1-x0)/n*.6;V.forEach((_,j)=>{cx.fillStyle='#5b8cff';cx.fillRect(px(j)-bw/2,py(j),bw,y1-py(j))})}
+ cx.font=fs+'px system-ui,sans-serif';
+ V.forEach((v,j)=>{cx.fillStyle='#fff';cx.fillText(Math.round(v*e*10)/10,px(j),py(j)-14);cx.fillStyle='#b8c2d6';cx.fillText((c.l[j]||'').slice(0,12),px(j),y1+44)});
+}
+function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const b=Math.max(W/sw,H/sh),md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0,w=sw*b*z,h=sh*b*z;
  cx.drawImage(src,(W-w)/2+px,(H-h)/2,w,h);
@@ -277,17 +308,20 @@ function render(T){
  if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
 }
 async function run(rec){
- stopF=false;await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
- const dest=ctx.createMediaStreamDestination(),vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
- vg.connect(ctx.destination);vg.connect(dest);
+ stopF=false;try{navigator.audioSession.type='playback'}catch(_){}
+ const dest=ctx.createMediaStreamDestination(),au=new Audio();let ok=true;
+ if(!rec){au.srcObject=dest.stream;ok=await Promise.race([au.play().then(()=>true,()=>false),sleep(1500).then(()=>true)])}
+ await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
+ const vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
+ vg.connect(dest);if(!rec&&!ok)vg.connect(ctx.destination);
  scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+s.st);srcs.push(n)}});
- if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(ctx.destination);mg.connect(dest);n.start(t0);srcs.push(n)}
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(vg);n.start(t0);srcs.push(n)}
  let mr,ch=[];
  if(rec){const mt=['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
   mr.ondataavailable=e=>ch.push(e.data);mr.start(1000)}
  await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0;if(stopF||T>total)return res();render(Math.max(0,T));requestAnimationFrame(f)};f()});
- srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());
+ srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());au.pause();au.srcObject=null;
  if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');const mp=mr.mimeType.includes('mp4');a.href=URL.createObjectURL(new Blob(ch,{type:mr.mimeType}));a.download='documental-ia.'+(mp?'mp4':'webm');a.click()}
 }
 $('play').onclick=()=>run(false);
