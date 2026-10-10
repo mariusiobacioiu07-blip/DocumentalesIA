@@ -90,14 +90,47 @@ const prog=p=>$('bar').firstElementChild.style.width=(p*100)+'%';
 const deadT=new Set(),deadI=new Set(),deadS=new Set(),deadA=new Set(),fatal=m=>/^(401|402|403|429)/.test(m);
 
 // ---------- Guion ----------
+const LIST={groq:'https://api.groq.com/openai/v1/models',cerebras:'https://api.cerebras.ai/v1/models',mistral:'https://api.mistral.ai/v1/models',openrouter:'https://openrouter.ai/api/v1/models'};
+const PREF={groq:/llama.*70b|gpt-oss|llama/,cerebras:/llama|gpt-oss|qwen/,mistral:/mistral-(small|medium|large)-latest/,openrouter:/llama|gemma|qwen|mistral|gpt-oss/};
+const BADM=/whisper|guard|embed|tts|vision|moderation|image|audio|safeguard|ocr/i;
+const GL='https://generativelanguage.googleapis.com/v1beta/models';
+async function models(p){
+ if(p.ms)return p.ms;
+ let ms=[p.model];
+ try{
+  if(p.type==='gemini'){
+   const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),v=n=>parseFloat((n.match(/gemini-([\d.]+)/)||[0,0])[1]);
+   ms=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-flash(-lite)?$/.test(m.name)).sort((a,b)=>v(b.name)-v(a.name)||(/lite/.test(a.name)-/lite/.test(b.name))).map(m=>m.name.replace('models/',''));
+  }else if(LIST[p.id]){
+   const j=await(await fj(LIST[p.id],{headers:keys[p.id]?{Authorization:'Bearer '+keys[p.id]}:{}})).json();
+   let ids=(j.data||[]).map(m=>m.id).filter(i=>!BADM.test(i));
+   if(p.id==='openrouter')ids=ids.filter(i=>i.endsWith(':free'));
+   ms=[...ids.filter(i=>PREF[p.id].test(i)),...ids];
+  }
+ }catch(e){log('(no pude listar modelos de '+p.name+')')}
+ if(!ms.length)ms=[p.model];
+ p.ms=[...new Set(ms)].slice(0,4);log(p.name+' → '+p.ms[0]);return p.ms;
+}
+let gTTSm;
+async function gttsModel(){
+ if(gTTSm)return gTTSm;
+ try{const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),a=j.models.filter(m=>/tts/.test(m.name)&&(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>m.name.replace('models/',''));gTTSm=a.find(n=>/flash/.test(n))||a[0]}catch(_){}
+ return gTTSm||'gemini-2.5-flash-preview-tts';
+}
 async function callLLM(p,prompt){
- if(p.type==='gemini'){
-  const j=await(await fj(`https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
-  return j.candidates[0].content.parts[0].text;
+ let err;
+ for(const m of await models(p)){
+  try{
+   if(p.type==='gemini'){
+    const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
+    return j.candidates[0].content.parts[0].text;
+   }
+   const h={'Content-Type':'application/json'};if(keys[p.id])h.Authorization='Bearer '+keys[p.id];
+   const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:m,messages:[{role:'user',content:prompt}],temperature:0.8})})).json();
+   return j.choices[0].message.content;
+  }catch(e){err=e;if(!/^(404|400)/.test(e.message))throw e}
  }
- const h={'Content-Type':'application/json'};if(keys[p.id])h.Authorization='Bearer '+keys[p.id];
- const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:p.model,messages:[{role:'user',content:prompt}],temperature:0.8})})).json();
- return j.choices[0].message.content;
+ throw err;
 }
 async function llm(prompt){
  for(const p of LLMS){
@@ -168,7 +201,7 @@ const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVIT
 const TTS=[
  {id:'elevenlabs',key:'elevenlabs',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2'})})).arrayBuffer())},
  {id:'gemini',key:'gemini',f:async(t,v)=>{
-  const j=await(await fj('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Di con tono sereno de documental: '+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
+  const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:'Di con tono sereno de documental: '+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
   for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|bin.charCodeAt(2*i+1)<<8;if(x>32767)x-=65536;d[i]=x/32768}return buf}},
  {id:'pollinations',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://text.pollinations.ai/'+enc(t)+'?model=openai-audio&voice='+VO.pl[v])).arrayBuffer())}
