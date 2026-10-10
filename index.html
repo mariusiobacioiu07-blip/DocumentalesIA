@@ -34,7 +34,7 @@ small{color:var(--mut)}
 <div class="card">
 <details>
 <summary>Claves API (opcionales; se guardan solo en tu navegador)</summary>
-<small>Sin claves funcionan Pollinations (texto, voz, imagen) y Wikimedia. Con claves mejora mucho: Pexels (fotos y videos gratis), Pixabay, Gemini (texto y voz), ElevenLabs (voz). Si un proveedor se agota, pasa al siguiente.</small>
+<small>Sin claves funcionan Pollinations (texto, voz, imagen), Wikipedia, Wikimedia y Openverse. Con claves mejora mucho: Pexels (fotos y videos gratis), Pixabay, Gemini (texto y voz), ElevenLabs (voz). Si un proveedor se agota, pasa al siguiente.</small>
 <div id="keys"></div>
 </details>
 </div>
@@ -47,8 +47,8 @@ small{color:var(--mut)}
 <div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
 </div>
 <div class="row">
-<div><label>Voz</label><select id="voice"><option value="2" selected>Masculina grave (documental)</option><option value="1">Masculina</option><option value="0">Femenina</option></select></div>
-<div><label>Imágenes</label><select id="vis"><option value="mix">Mixto: stock + IA + gráficas</option><option value="stock">Solo stock (IA de respaldo)</option><option value="ai">Solo IA</option></select></div>
+<div><label>Voz</label><select id="voice"><option value="2" selected>Masculina grave (documental)</option><option value="3">Masculina profunda / épica</option><option value="1">Masculina cálida</option><option value="5">Masculina joven</option><option value="0">Femenina</option><option value="4">Femenina narradora</option></select></div>
+<div><label>Imágenes</label><select id="vis"><option value="mix">Mixto: Wikipedia + stock + IA + gráficas</option><option value="stock">Solo stock (IA de respaldo)</option><option value="ai">Solo IA</option></select></div>
 </div>
 <label>Formato</label>
 <select id="fmt"><option value="h">Horizontal 16:9 (YouTube)</option><option value="v">Vertical 9:16 (Shorts, TikTok, Reels)</option></select>
@@ -63,7 +63,7 @@ small{color:var(--mut)}
 
 <div class="card">
 <canvas id="cv" width="1280" height="720"></canvas>
-<button id="play" class="s" disabled>▶ Reproducir</button>
+<div class="row" style="align-items:center;margin-top:8px"><button id="play" class="s" disabled style="flex:none;margin:0;width:52px">▶</button><input id="sk" type="range" min="0" max="1000" value="0" disabled style="border:0;background:none;padding:0"><small id="tm" style="flex:none">0:00 / 0:00</small></div>
 <button id="rec" class="s" disabled>⬇ Exportar (.webm con voz)</button>
 <button id="stop" class="s">■ Parar</button>
 <br><small>La exportación dura lo mismo que el video. No cambies de pestaña mientras graba.</small>
@@ -169,6 +169,14 @@ async function makeImg(prompt,seed){
 // ---------- Stock libre ----------
 const isV=()=>$('fmt').value==='v',used=new Set(),pick=a=>a.find(x=>!used.has(x.url))||a[0],enc=encodeURIComponent;
 const STOCK=[
+ {id:'wikipedia',w:1,f:async(q,s)=>{
+  const ws=(q+' '+s.w).toLowerCase().split(/\s+/),sc=p=>ws.filter(w=>w.length>2&&p.title.toLowerCase().includes(w)).length,
+  g=async t=>{const j=await(await fj('https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&generator=images&gimlimit=40&prop=imageinfo&iiprop=url|extmetadata|size|mime&iiurlwidth=1280&titles='+enc(t))).json();
+   return Object.values((j.query||{}).pages||{}).filter(p=>p.imageinfo).sort((a,b)=>sc(b)-sc(a)).map(p=>{const i=p.imageinfo[0],m=i.extmetadata||{},l=m.LicenseShortName&&m.LicenseShortName.value;
+    return l&&/CC0|public domain|CC BY|PD/i.test(l)&&/jpeg|png/.test(i.mime)&&i.width>=700&&i.thumburl&&{t:'img',url:i.thumburl,credit:'Wikipedia – '+((m.Artist&&m.Artist.value)||'').replace(/<[^>]+>/g,'').slice(0,50)+' ('+l+')'}}).filter(Boolean)};
+  let a=await g(s.w);
+  if(!a.length){const o=await(await fj('https://en.wikipedia.org/w/api.php?action=opensearch&format=json&origin=*&limit=1&search='+enc(s.w))).json();if(o[1]&&o[1][0])a=await g(o[1][0])}
+  return a.length?pick(a):null}},
  {id:'pexels-video',key:'pexels',f:async q=>{
   const j=await(await fj('https://api.pexels.com/videos/search?per_page=6&orientation='+(isV()?'portrait':'landscape')+'&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
   const M=f=>Math.max(f.width,f.height),a=j.videos.map(v=>{const f=v.video_files.filter(f=>f.file_type==='video/mp4'&&M(f)>=640&&M(f)<=1920).sort((a,b)=>Math.abs(M(a)-1000)-Math.abs(M(b)-1000))[0];return f&&{t:'vid',url:f.link,credit:'Pexels – '+v.user.name}}).filter(Boolean);
@@ -176,6 +184,9 @@ const STOCK=[
  {id:'pexels-foto',key:'pexels',f:async q=>{
   const j=await(await fj('https://api.pexels.com/v1/search?per_page=6&orientation='+(isV()?'portrait':'landscape')+'&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,credit:'Pexels – '+p.photographer}))):null}},
+ {id:'pixabay-video',key:'pixabay',f:async q=>{
+  const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&q=`+enc(q))).json();
+  const a=j.hits.map(h=>{const f=h.videos.medium||h.videos.small;return f&&f.url&&{t:'vid',url:f.url,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
   return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,credit:'Pixabay – '+h.user}))):null}},
@@ -183,15 +194,20 @@ const STOCK=[
   const j=await(await fj('https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=1280&gsrsearch='+enc(q+' filetype:bitmap'))).json();
   const a=Object.values((j.query||{}).pages||{}).map(p=>{const i=p.imageinfo&&p.imageinfo[0],m=i&&i.extmetadata,l=m&&m.LicenseShortName&&m.LicenseShortName.value;
    return l&&/CC0|public domain|CC BY/i.test(l)&&{t:'img',url:i.thumburl,credit:'Wikimedia Commons – '+((m.Artist&&m.Artist.value)||'').replace(/<[^>]+>/g,'').slice(0,50)+' ('+l+')'}}).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'openverse',f:async q=>{
+  const j=await(await fj('https://api.openverse.org/v1/images/?page_size=10&license_type=commercial&q='+enc(q))).json();
+  const a=(j.results||[]).filter(r=>r.thumbnail&&!/gif|svg/i.test(r.filetype||'')).map(r=>({t:'img',url:r.thumbnail,credit:'Openverse – '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+' '+(r.license_version||'')+')'}));
   return a.length?pick(a):null}}
 ];
 async function getMedia(s,k){
  const vm=$('vis').value;
  if(s.c)return{};
- if(vm==='stock'||(vm==='mix'&&s.t!=='ai'))for(const p of STOCK){
+ const L=STOCK.filter(p=>!p.w||s.w);if(L[0]&&L[0].w&&s.t!=='wiki')L.push(L.shift());
+ if(vm==='stock'||(vm==='mix'&&s.t!=='ai'))for(const qq of [s.q,s.q2].filter(Boolean))for(const p of L){
   if(deadS.has(p.id)||(p.key&&!keys[p.key]))continue;
   try{
-   const m=await p.f(s.q);if(!m)continue;used.add(m.url);
+   const m=await p.f(qq,s);if(!m)continue;used.add(m.url);
    const b=await(await fj(m.url)).blob();
    if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.src=URL.createObjectURL(b);await Promise.race([new Promise((r,j)=>{v.onloadeddata=r;v.onerror=j}),sleep(8000).then(()=>{throw new Error('video timeout')})]);return{v,credit:m.credit}}
    return{img:await createImageBitmap(b),credit:m.credit};
@@ -201,11 +217,11 @@ async function getMedia(s,k){
 }
 
 // ---------- Voz natural ----------
-const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','pNInz6obpgDQGcFmaJgB','pNInz6obpgDQGcFmaJgB'],gm:['Kore','Charon','Algenib'],pl:['nova','onyx','onyx']};
+const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','ErXwobaYiN019PkySvjV','pNInz6obpgDQGcFmaJgB','VR6AewLTigWG4xSOukaG','21m00Tcm4TlvDq8ikWAM','TxGEqnHWrfWFTfGW9XjX'],gm:['Kore','Charon','Algenib','Fenrir','Aoede','Puck'],pl:['nova','echo','onyx','fable','shimmer','alloy']};
 const TTS=[
  {id:'elevenlabs',key:'elevenlabs',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2'})})).arrayBuffer())},
  {id:'gemini',key:'gemini',f:async(t,v)=>{
-  const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v>0?'Di con voz grave, pausada y envolvente de narrador de documental: ':'Di con tono sereno de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
+  const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v==0||v==4?'Di con tono sereno y cálido de narradora de documental: ':'Di con voz grave, pausada y envolvente de narrador de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
   for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|bin.charCodeAt(2*i+1)<<8;if(x>32767)x-=65536;d[i]=x/32768}return buf}},
  {id:'pollinations',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://text.pollinations.ai/'+enc(t)+'?model=openai-audio&voice='+VO.pl[v])).arrayBuffer())}
@@ -243,15 +259,15 @@ let scenes=[],title='',cancel=false;
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=topic.slice(0,60);cancel=false;ctx.resume();
- $('go').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());prog(0);
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());prog(0);
  const total=Math.round(+$('min').value*6),L=$('lang').value==='es-ES'?'español':'English';
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video de archivo: 2 a 4 palabras en inglés, concretas y visuales), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("stock" o "ai": usa "ai" en una de cada tres escenas aproximadamente, para conceptos abstractos, recreaciones históricas o cosas imposibles de fotografiar) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico ni del tema en general), "q2" (otra búsqueda alternativa y más amplia, en inglés), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas, "ai" en una de cada cuatro escenas aproximadamente, para conceptos abstractos, recreaciones históricas o cosas imposibles de fotografiar) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
-   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),t:o.t,c:c&&c.v.length>1?c:null})});
+   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null})});
    prog(0.2*e/total);
   }
   log(`Guion listo: ${scenes.length} escenas. Buscando imágenes/video y generando voz…`);
@@ -265,13 +281,16 @@ $('go').onclick=async()=>{
   let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.5;s.st=t;t+=s.dur});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
-  $('play').disabled=$('rec').disabled=false;render(0);
+  $('play').disabled=$('rec').disabled=$('sk').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
  $('go').disabled=false;
 };
 
 // ---------- Edición / render ----------
-let W=1280,H=720;const cv=$('cv'),cx=cv.getContext('2d'),X=0.9;let stopF=false,total=0;
+let W=1280,H=720;const cv=$('cv'),cx=cv.getContext('2d'),X=0.9;let stopF=false,total=0,paused=false,playing=false,rc=false,drag=false,pos=0,seekT=null;
+const DUR=()=>{const l=scenes[scenes.length-1];return l&&l.dur?l.st+l.dur+.5:0},tf=t=>Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0'),pl=()=>{$('play').textContent=playing&&!paused?'⏸':'▶'};
+function ui(T){if(drag)return;const d=DUR();$('sk').value=d?T/d*1000:0;$('tm').textContent=tf(T)+' / '+tf(d)}
+function chunks(t,m){const o=[];let l='';for(const w of t.split(/\s+/)){l=l?l+' '+w:w;if(l.length>=m||(l.length>=m*.5&&/[,.;:!?]$/.test(w))){o.push(l);l=''}}if(l)o.push(l);return o}
 function setFmt(){const v=isV();W=v?720:1280;H=v?1280:720;cv.width=W;cv.height=H;cv.style.maxWidth=v?'340px':'none';cv.style.margin='0 auto'}
 $('fmt').onchange=()=>{setFmt();if(scenes.length&&scenes[0].m)render(0)};
 setFmt();
@@ -293,38 +312,41 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const b=Math.max(W/sw,H/sh),md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0,w=sw*b*z,h=sh*b*z;
  cx.drawImage(src,(W-w)/2+px,(H-h)/2,w,h);
 }
-function render(T){
+function render(T){ui(T);
  const A=[];scenes.forEach((s,i)=>{if(T>=s.st-(i?X:0)&&T<=s.st+s.dur)A.push(i)});
  cx.fillStyle='#000';cx.fillRect(0,0,W,H);cx.filter='contrast(1.06) saturate(1.1)';
  for(const i of A){const s=scenes[i],o=i?X:0;cx.globalAlpha=i?Math.min(1,(T-s.st+X)/X):1;drawM(s,Math.min(1,Math.max(0,(T-s.st+o)/(s.dur+o))),i)}
  cx.globalAlpha=1;cx.filter='none';
- scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i);if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
+ scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i)&&playing&&!paused;if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
- if($('sub').checked&&cur){const fs=W>H?32:38,lh=fs*1.3;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(cur.n,W-140),y0=(W>H?($('lb').checked?640:690):H-260)-ls.length*lh;
-  cx.fillStyle='rgba(0,0,0,.55)';cx.fillRect(40,y0-fs,W-80,ls.length*lh+16);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l.trim(),W/2,y0+k*lh))}
+ if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.5,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
+  const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(c,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
+  cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l,W/2,y0+k*lh))}
  if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.font='bold '+(W>H?44:40)+'px Georgia,serif';cx.textAlign='left';const tl=wrap(title,W-180),ty=W>H?142:200;cx.fillStyle='#e8c15a';cx.fillRect(80,ty-42,6,tl.length*50-8);cx.fillStyle='#fff';tl.forEach((l,k)=>cx.fillText(l.trim(),100,ty+k*50));cx.globalAlpha=1}
  if($('lb').checked&&W>H){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
  if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
 }
-async function run(rec){
- stopF=false;try{navigator.audioSession.type='playback'}catch(_){}
+async function run(rec,from=0){
+ stopF=paused=false;playing=true;rc=rec;pl();try{navigator.audioSession.type='playback'}catch(_){}
  const dest=ctx.createMediaStreamDestination(),au=new Audio();let ok=true;
  if(!rec){au.srcObject=dest.stream;ok=await Promise.race([au.play().then(()=>true,()=>false),sleep(1500).then(()=>true)])}
  await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
  const vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
  vg.connect(dest);if(!rec&&!ok)vg.connect(ctx.destination);
- scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+s.st);srcs.push(n)}});
- if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(vg);n.start(t0);srcs.push(n)}
+ scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
  if(rec){const mt=['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
   mr.ondataavailable=e=>ch.push(e.data);mr.start(1000)}
- await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0;if(stopF||T>total)return res();render(Math.max(0,T));requestAnimationFrame(f)};f()});
- srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());au.pause();au.srcObject=null;
+ await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0+from;if(stopF||T>total)return res();render(pos=Math.max(from,T));requestAnimationFrame(f)};f()});
+ srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());au.pause();au.srcObject=null;playing=rc=false;pl();if(!rec){if(seekT!=null){const q=seekT;seekT=null;return run(false,q)}pos=0;render(0)}
  if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');const mp=mr.mimeType.includes('mp4');a.href=URL.createObjectURL(new Blob(ch,{type:mr.mimeType}));a.download='documental-ia.'+(mp?'mp4':'webm');a.click()}
 }
-$('play').onclick=()=>run(false);
+$('play').onclick=()=>{if(rc)return;if(!playing)return run(false,pos>=DUR()-1?0:pos);paused=!paused;paused?ctx.suspend():ctx.resume();pl()};
+$('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textContent=tf(t)+' / '+tf(DUR());if(!playing)render(t)};
+$('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
 $('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Video exportado.'))};
 $('stop').onclick=()=>{stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 </script>
