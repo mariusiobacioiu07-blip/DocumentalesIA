@@ -41,7 +41,9 @@ small{color:var(--mut)}
 
 <div class="card">
 <label>Prompt / tema del documental</label>
-<textarea id="topic" placeholder="Ej: La caída del Imperio romano"></textarea>
+<textarea id="topic" placeholder="Ej: La caída del Imperio romano. O pega aquí tu narración completa y se usará tal cual."></textarea>
+<label>Mi texto es…</label>
+<select id="nmode"><option value="auto" selected>🎯 Automático (si escribo una narración, se usa tal cual; si solo pongo un tema, la IA la escribe)</option><option value="guion">📜 Esto es MI narración: úsala exactamente así (la IA solo pone voz e imágenes)</option><option value="tema">💡 Esto es solo un tema: que la IA escriba la narración</option></select>
 <div class="row">
 <div><label>Duración</label><select id="min"><option value="0.5" selected>30 segundos (prueba)</option><option value="0.58">35 segundos (Short)</option><option value="1">1 minuto</option><option value="2">2 minutos</option><option value="5">5 minutos</option><option value="10">10 minutos</option><option value="15">15 minutos</option><option value="20">20 minutos</option></select></div>
 <div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
@@ -161,7 +163,7 @@ async function gttsModel(){
  try{const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),a=j.models.filter(m=>/tts/.test(m.name)&&(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>m.name.replace('models/',''));gTTSm=a.find(n=>/flash/.test(n))||a[0]}catch(_){}
  return gTTSm||'gemini-2.5-flash-preview-tts';
 }
-async function callLLM(p,prompt){
+async function callLLM(p,prompt,temp){
  let err;
  for(const m of await models(p)){
   try{
@@ -170,20 +172,20 @@ async function callLLM(p,prompt){
     const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');p.okm=m;return tx;
    }
    if(p.type==='gemini'){
-    const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
+    const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({contents:[{parts:[{text:prompt}]}]},temp==null?{}:{generationConfig:{temperature:temp}}))})).json();
     return j.candidates[0].content.parts[0].text;
    }
    const h={'Content-Type':'application/json'};if(keys[p.id])h.Authorization='Bearer '+keys[p.id];
-   const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:m,messages:[{role:'user',content:prompt}],temperature:0.8})})).json();
+   const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:m,messages:[{role:'user',content:prompt}],temperature:temp==null?0.8:temp})})).json();
    return j.choices[0].message.content;
   }catch(e){err=e;if(!/^(404|400|429|5\d\d)/.test(e.message))throw e}
  }
  throw err;
 }
-async function llm(prompt){
+async function llm(prompt,temp){
  for(const p of LLMS){
   if(deadT.has(p.id)||(!p.nokey&&!keys[p.id]))continue;
-  try{const t=await callLLM(p,prompt);log('✓ texto: '+p.name);return t}
+  try{const t=await callLLM(p,prompt,temp);log('✓ texto: '+p.name);return t}
   catch(e){log('✗ '+p.name+': '+em(e));if(fatal(e.message))deadT.add(p.id)}
  }
  throw new Error('Fallaron todos los proveedores de texto');
@@ -414,7 +416,7 @@ async function rank(s,cs){
  if(!th.length)return null;
  for(const v of J){
   const sub=th.slice(0,v.max),vids=sub.map((x,k)=>cs[x.i].t==='vid'?k:-1).filter(k=>k>=0),
-  t=`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Se te muestran ${sub.length} imágenes numeradas desde 0.${vids.length?' Las imágenes '+vids.join(', ')+' son el primer fotograma de clips de vídeo (a igualdad de calidad, prefiere un clip).':''}${isV()?' El vídeo es VERTICAL 9:16: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''}
+  t=`Documental sobre "${title}".${VB?' Guía visual del vídeo: '+VB+'.':''} Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Se te muestran ${sub.length} imágenes numeradas desde 0.${vids.length?' Las imágenes '+vids.join(', ')+' son el primer fotograma de clips de vídeo (a igualdad de calidad, prefiere un clip).':''}${isV()?' El vídeo es VERTICAL 9:16: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''}
 Reglas estrictas: 1) Solo vale si el sujeto principal es EXACTAMENTE el sujeto obligatorio (misma especie, lugar o época), no uno parecido ni de otra especie. 2) Rechaza dibujos, ilustraciones, animaciones, dibujos animados, renders 3D, juguetes, collages, imágenes con texto o marcas de agua y las de baja calidad. 3) Debe ser coherente con lo que dice la locución (si habla de cazar en grupo o de comer, debe verse esa acción o el grupo; un animal de la especie correcta sin esa acción solo sirve si es lo mejor disponible). 4) Rechaza plantillas, mockups, hojas o marcos en blanco, fondos genéricos y cualquier imagen cuyo tema no sea el de la locución aunque sea bonita (una imagen bonita pero de otro tema NO sirve, ni para el sujeto de la escena ni para una cifra). 5) Ante la duda, descarta.
 Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto correcto? sí/no". Termina con una última línea "RESPUESTA: n" con el número de la mejor imagen que cumpla TODAS las reglas, o "RESPUESTA: -1" si ninguna.`;
   try{
@@ -550,7 +552,7 @@ async function getMedia(s,k){
    }
   }
  }
- const im=await makeImg(s.i+', cinematic documentary still, muted film color grading, 35mm, natural light',k,!s._r);if(im)return{img:im};if(!s._r){s._r=1;return getMedia(s,k)}return{img:await makeImg('',k)};
+ const im=await makeImg(s.i+(VBI?', '+VBI:'')+', cinematic documentary still, muted film color grading, 35mm, natural light',k,!s._r);if(im)return{img:im};if(!s._r){s._r=1;return getMedia(s,k)}return{img:await makeImg('',k)};
 }
 
 
@@ -673,13 +675,13 @@ async function pickSty(topic){
 
 const WPS=()=>+$('wps').value||2.6,INTRO=()=>$('intro').checked?3:0,TAIL=()=>$('outro').checked?5:0;
 $('intro').onchange=$('outro').onchange=()=>{if(playing||rc||!scenes.length||!scenes[0].m)return;relayout();pos=0;render(0)};
-$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="ncp" disabled>📋 Copiar narración</button><button class="s" id="ntx" disabled>💾 Guardar narración (.txt)</button><button class="s" id="nsr" disabled>💬 Guardar subtítulos con tiempos (.srt)</button><button class="s" id="cont" style="display:none">✅ Continuar con este guion</button><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button><label style="display:block;margin-top:10px">Cambiar una escena</label><select id="esc"></select><button class="s" id="esn" disabled>🔄 Buscar otra imagen o vídeo</button><label style="display:block;margin-top:6px">📷 O usa tu propia foto en esa escena</label><input id="esu" type="file" accept="image/*"><label style="display:block;margin-top:6px">🎞 O usa tu propio vídeo en esa escena (p. ej. de Storyblocks)</label><input id="esv" type="file" accept="video/*"><label style="display:block;margin-top:6px">Empezar tu vídeo en el segundo</label><input id="esvs" type="number" min="0" step="0.5" value="0"><button class="s" id="mt" disabled>📝 Título, descripción y hashtags</button><textarea id="meta" readonly style="min-height:110px;font-size:12px"></textarea><button class="s" id="th" disabled>🖼 Crear miniatura</button><div id="thimg"></div>');
+$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="ncp" disabled>📋 Copiar narración</button><button class="s" id="ntx" disabled>💾 Guardar narración (.txt)</button><button class="s" id="nsr" disabled>💬 Guardar subtítulos con tiempos (.srt)</button><button class="s" id="cont" style="display:none">✅ Continuar con este guion</button><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button><details id="board" style="margin-top:10px"><summary>🎞 Panel de escenas: miniaturas, otras opciones y candado</summary><small>Toca «↻ opciones» para ver otras imágenes o clips de esa escena y elegir con un toque. El candado 🔒 impide que el director IA cambie esa escena.</small><div id="bgrid"></div><div id="balt"></div></details><label style="display:block;margin-top:10px">Cambiar una escena</label><select id="esc"></select><button class="s" id="esn" disabled>🔄 Buscar otra imagen o vídeo</button><label style="display:block;margin-top:6px">📷 O usa tu propia foto en esa escena</label><input id="esu" type="file" accept="image/*"><label style="display:block;margin-top:6px">🎞 O usa tu propio vídeo en esa escena (p. ej. de Storyblocks)</label><input id="esv" type="file" accept="video/*"><label style="display:block;margin-top:6px">Empezar tu vídeo en el segundo</label><input id="esvs" type="number" min="0" step="0.5" value="0"><button class="s" id="mt" disabled>📝 Título, descripción y hashtags</button><textarea id="meta" readonly style="min-height:110px;font-size:12px"></textarea><button class="s" id="th" disabled>🖼 Crear miniatura</button><div id="thimg"></div>');
 let contR=null;
 const STY={clasico:'Estilo documental clásico: tono sereno, pausado y majestuoso.',curiosidades:'Estilo curiosidades: dinámico, frases cortas y cada escena con un dato sorprendente.',misterio:'Estilo misterio / true crime: tono grave, suspense, pistas que se van revelando y un giro final.',educativo:'Estilo educativo: claro y ordenado, con ejemplos sencillos, de lo básico a lo complejo.',shorts:'Estilo Shorts viral: ritmo muy rápido, un gancho brutal en la primera frase y un cierre que invite a volver a verlo.',top:'Estilo TOP / ranking en cuenta atrás: respeta EXACTAMENTE el número de elementos que pide el tema (por ejemplo «top 7» son siete elementos), de mayor a menor número, dejando el número uno para el final como el mejor o más impactante. Planifica la lista completa desde el principio, mantenla igual en todas las tandas y no repitas elementos. Cada elemento ocupa varias escenas seguidas, más o menos el mismo número para todos: la primera lo presenta con su número y su nombre (solo esa escena lleva el cartel «item») y las siguientes dan datos concretos, historia y un detalle sorprendente. Tono dinámico, con ganchos entre elementos.',animales:'Estilo naturaleza y animales, al modo de los grandes documentales de naturaleza: tono de asombro y respeto, con comportamiento, hábitat, adaptaciones y relaciones entre especies. Usa el nombre común y, la primera vez, el científico. Las búsquedas de imagen deben nombrar la especie concreta y su entorno, y casi todas las escenas llevan en «a» el sonido real del animal o de su hábitat.',espacio:'Estilo espacio y universo: tono de asombro, escalas y comparaciones fáciles de imaginar (distancias, tiempos, tamaños), misiones y descubrimientos reales con sus nombres, y qué sabemos y qué sigue siendo un misterio. En el espacio no hay sonido: en «a» pon null salvo en escenas en la Tierra o dentro de una nave.',planeta:'Estilo planeta Tierra y lugares: geografía, clima, paisajes, culturas y lugares concretos con su nombre y su país; cada escena ancla un lugar o fenómeno real y lo describe con detalles visuales.',historia:'Estilo historia: relato cronológico claro con personajes, causas y consecuencias; las fechas se dicen con palabras y siempre situadas en su época, y se distinguen los hechos probados de las leyendas.',ciencia:'Estilo ciencia y tecnología: explica cómo funciona algo con analogías cotidianas, del problema a la solución, con ejemplos reales y sin jerga innecesaria.',biografia:'Estilo biografía: la vida de una persona en orden narrativo (origen, obstáculos, momentos decisivos y legado), con anécdotas verificables que la humanicen.'};
 $('cont').onclick=()=>contR&&contR();
 const credits=()=>{$('cred').value=[...new Set([...scenes.map(s=>s.m&&s.m.credit),...scenes.map(s=>s.ac),mAuto&&mCred?mCred:null].filter(x=>x&&!/^(Foto|Vídeo) propi/.test(x)))].join('\n')};
-const applyM=s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;relayout();if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}credits();render(pos)};
-$('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{dropM(s);s._r=0;s.m=await getMedia(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
+const applyM=s=>{s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;relayout();if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}credits();renderTile(scenes.indexOf(s));render(pos)};
+$('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{dropM(s);s._r=0;s.m=await getMediaFull(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
 $('esu').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{const im=await createImageBitmap(f);dropM(s);s.m={img:im,credit:'Foto propia'};applyM(s);log('✓ Escena '+(i+1)+': tu foto')}catch(er){log('❌ No pude leer esa foto')}e.target.value=''};
 $('esv').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{log('Cargando tu vídeo…');const r=await vidFromBlob(f,{credit:'Vídeo propio'});r.vs=Math.max(0,+$('esvs').value||0);delete r.blob;dropM(s);s.m=r;applyM(s);log('✓ Escena '+(i+1)+': tu vídeo (desde el segundo '+r.vs+')')}catch(er){log('❌ No pude leer ese vídeo: '+em(er))}e.target.value=''};
 $('mt').onclick=async()=>{$('mt').disabled=true;try{$('meta').value=await llm('Para un vídeo documental sobre "'+title+'" en '+($('lang').value==='es-ES'?'español':'English')+', con este guion: '+scenes.map(s=>s.n).join(' ')+'\n\nDevuelve en texto plano: 1) TÍTULO atractivo (máximo 70 caracteres, sin clickbait falso; si el vídeo trata de un animal concreto, su nombre va como PRIMERA palabra del título), 2) DESCRIPCIÓN de 3 a 4 líneas con palabras clave, 3) 12 HASHTAGS'+(isV()?' (incluye #Shorts)':'')+', 4) 3 ideas de TEXTO PARA LA MINIATURA (máximo 4 palabras cada una).')+(isV()||DUR()<180?'':'\n\nCapítulos (pégalos en la descripción):\n'+scenes.filter((s,i)=>!i||(s.o&&(s.o.k==='item'||s.o.k==='title'))).map(s=>tf(s.st)+' '+(s.o&&s.o.t?(s.o.n?s.o.n+'. ':'')+s.o.t:'Intro')).join('\n'))+'\n\nCréditos:\n'+$('cred').value}catch(e){log('❌ '+e.message)}$('mt').disabled=false};
@@ -693,13 +695,13 @@ $('th').onclick=async()=>{const sc=scenes.find(x=>x.img&&!x.v&&!x.c)||scenes.fin
  $('ths').onclick=async()=>{try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}const a=document.createElement('a');a.href=url;a.download=f.name;a.click()}};
 try{$('gui').value=localStorage.getItem('vidia_gui')||''}catch(_){}
 // Reglas del canal (prompt maestro v6 adaptado): son las de por defecto; editables y guardadas en el navegador.
-const RULES0=`1) HOOK: la primera frase rompe una expectativa (contradicción, negar un mito, escena ya en tensión, dato-cebo con pregunta concreta o comparación humana). Suena hablada y nombra el animal desde el primer segundo. No uses siempre el mismo tipo de hook.
+const RULES0=`1) HOOK: la primera frase rompe una expectativa (contradicción, negar un mito, escena ya en tensión, dato-cebo con pregunta concreta o comparación humana). Suena hablada y nombra el tema o sujeto desde el primer segundo. No uses siempre el mismo tipo de hook.
 2) SIN RELLENO: cada dato sirve a la historia; si no hace avanzar la narrativa, fuera. Nunca inventes datos ni estadísticas.
 3) PROHIBIDAS las frases de plantilla de documental o de IA y toda la familia de muletillas que anuncian en vez de contar: «en las profundidades de», «imagina un mundo donde», «la naturaleza nos sorprende», «¿sabías que…?», «pero eso no es todo», «y aquí viene lo increíble», «pero espera, hay más», «hay un detalle que casi nadie conoce», «aquí es donde se pone interesante», «lo que viene te va a sorprender», «pocos saben esto», «esto es una locura», «es importante destacar», «cabe mencionar». Vale cualquier variante con la misma función. Tampoco expliques por qué un dato es impactante.
 4) VOZ HUMANA: frases cortas para golpear y largas para envolver, presente narrativo en las escenas de acción, algo de opinión o actitud, nada aséptico ni perfectamente equilibrado. Debe sonar a alguien contándotelo en un bar.
 5) CIERRE: corto y conectado con el hook. Termina SIEMPRE con la frase exacta «sígueme para más curiosidades», precedida de una premisa corta y variable ligada al dato («Si no sabías esto», «Si no lo sabías», «Si quieres aprender más»). Sin moraleja ni explicación antes.
-6) GATILLO DE COMENTARIOS, honesto y sin anunciarlo: usa al menos uno: gap de curiosidad con una pregunta concreta y contestable (el de por defecto), una tensión planteada y resuelta solo en parte, o «la mayoría cree X, quien trabaja con estos animales sabe que es al revés» (solo si es verdad). No prometas impacto.
-7) ESTRUCTURA DEL DATO CENTRAL: animal (conocido o no) → dato que rompe lo que se cree → por qué ocurre (mecanismo real) → consecuencia extrema y concreta. Ejemplo: loro → «su pico no deja de crecer en toda su vida» → es queratina, como las uñas → sin desgaste, no puede comer. En vídeos largos, bloques con mini-arco unidos por causa-efecto o contraste, nunca por «y además».`;
+6) GATILLO DE COMENTARIOS, honesto y sin anunciarlo: usa al menos uno: gap de curiosidad con una pregunta concreta y contestable (el de por defecto), una tensión planteada y resuelta solo en parte, o «la mayoría cree X, quien conoce el tema sabe que es al revés» (solo si es verdad). No prometas impacto.
+7) ESTRUCTURA DEL DATO CENTRAL: sujeto (conocido o no) → dato que rompe lo que se cree → por qué ocurre (mecanismo real) → consecuencia extrema y concreta. Ejemplo: loro → «su pico no deja de crecer en toda su vida» → es queratina, como las uñas → sin desgaste, no puede comer. En vídeos largos, bloques con mini-arco unidos por causa-efecto o contraste, nunca por «y además».`;
 try{const r=localStorage.getItem('vidia_rules');$('rules').value=r===null?RULES0:r}catch(_){$('rules').value=RULES0}
 $('rules').oninput=()=>{try{localStorage.setItem('vidia_rules',$('rules').value)}catch(_){}};
 $('rulesReset').onclick=()=>{$('rules').value=RULES0;try{localStorage.removeItem('vidia_rules')}catch(_){}};
@@ -741,11 +743,11 @@ async function director(){const L=[];
   if(d)L.push({s,i,d})}
  const bad=[];
  for(let b=0;b<L.length&&!cancel;b+=4){const part=L.slice(b,b+4),D=part.map(x=>x.d),
-  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden (algunas son un fotograma de un clip de vídeo). Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad, o que es una plantilla, mockup, hoja en blanco o escena genérica sin relación con la locución. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
-  for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(o&&o.ok===false&&part[o.i])bad.push({x:part[o.i],why:String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}
+  t='Eres director de edición de un documental sobre "'+title+'".'+(VB?' Guía visual del vídeo: '+VB+'.':'')+' Se te muestran '+part.length+' imágenes numeradas desde 0, en el orden en que salen en el vídeo (algunas son un fotograma de un clip). Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Escena anterior a la imagen 0: "'+(L[b-1]?L[b-1].s.n.slice(0,90):'(ninguna)')+'". Escena posterior a la última imagen: "'+(L[b+part.length]?L[b+part.length].s.n.slice(0,90):'(ninguna)')+'". Puntúa cada imagen de 0 a 10: 10 = muestra con claridad lo que dice su frase y encaja con la guía visual; 6 = aceptable aunque genérica; menos de 6 = no muestra el sujeto de su frase (otra especie, lugar o época), es de muy mala calidad, es una plantilla, mockup, hoja en blanco, ilustración o escena genérica sin relación con la locución. Resta 3 puntos a una imagen casi idéntica, o del mismo tipo de plano, que la imagen contigua (se nota la repetición). Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"score":0 a 10,"why":"motivo breve"}.';
+  for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(!o||!part[o.i])return;const sc=+o.score;if(o.ok===false||(isFinite(sc)&&sc<6))bad.push({x:part[o.i],sc:isFinite(sc)?sc:0,why:'nota '+(isFinite(sc)?sc:'?')+'/10: '+String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}
   if(b%20===0)log('🎬 Director: revisadas '+Math.min(b+4,L.length)+' de '+L.length)}
  log('🎬 Director: '+(bad.length?bad.length+' escenas no encajan':'todo en orden'));
- for(const f of bad.slice(0,Math.max(6,Math.ceil(L.length*.2)))){if(cancel)break;const s=f.x.s;log('🎬 escena '+(f.x.i+1)+': '+f.why+'; busco otra');try{dropM(s);s._r=0;s.m=await getMedia(s,f.x.i+Date.now()%1000)}catch(e){}}}
+ for(const f of bad.filter(f=>!f.x.s.locked).sort((a,b)=>a.sc-b.sc).slice(0,Math.max(6,Math.ceil(L.length*.25)))){if(cancel)break;const s=f.x.s;log('🎬 escena '+(f.x.i+1)+': '+f.why+'; busco otra');try{dropM(s);s._r=0;s.m=await getMediaFull(s,f.x.i+Date.now()%1000)}catch(e){}}}
 
 function setRate(s){if(!s.v||!isFinite(s.v.duration)||s.v.duration<=0||!s.dur)return;const r=Math.max(.5,s.v.duration-(s.vs||0))/s.dur;s.v.playbackRate=Math.max(.8,Math.min(1,r));s.v.loop=r<.8}
 function relayout(){let t=INTRO();scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});return t}
@@ -777,38 +779,209 @@ $('nsr').onclick=()=>{if(scenes.length)saveTxt('subtitulos.srt',srt())};
 $('rv').onclick=async()=>{if(!scenes.length||$('go').disabled)return;cancel=false;$('rv').disabled=$('go').disabled=true;ctx.resume();keepOn();log('Rehaciendo solo la voz…');
  try{const vp=await voices();if(!vp){scenes.forEach(s=>s.a=null);log('⚠ Sigue sin poder generarse la voz.')}else log('✓ Voz lista ('+vp+')');const t=relayout();log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);pos=0;render(0)}catch(e){log('❌ '+e.message)}
  keepOff();$('go').disabled=$('rv').disabled=false};
+// ---------- Narración: modos de texto y escritura (la narración se escribe ANTES y por separado de los datos visuales) ----------
+const wcount=s=>String(s).split(/\s+/).filter(Boolean).length;
+// Divide un texto en escenas SIN tocar ni una palabra: por frases (y por saltos de línea); parte las muy largas por comas y une los fragmentos diminutos.
+// Devuelve también .p: la pausa (en s) que tu propio texto pide después de cada escena (párrafo = pausa larga, «…» media, «?» y «:» corta).
+function splitScenes(t,w){
+ const paras=String(t).replace(/\r/g,'').split(/\n\s*\n/).map(p=>p.split('\n').map(x=>x.trim()).filter(Boolean)).filter(p=>p.length);
+ const flat=paras.flat(),nm=flat.filter(x=>/^\d+[.)]\s+/.test(x));
+ const strip=flat.length>=3&&nm.length>=flat.length*.8&&nm.every((x,i)=>+x.match(/^\d+/)[0]===i+1);
+ const SP=/(?<=[.!?…]["”»)]?)(?<!(?:^|\s)\d{1,3}\.)(?<!\b(?:Sr|Sra|Dr|Dra|Mr|Mrs|St|Sta|Ud|Uds|Vd|EE|a\.C|d\.C|vs|núm|pág|aprox)\.)\s+(?=[¿¡«"“(]?[A-ZÁÉÍÓÚÑÜ0-9])/;
+ const S=[];
+ paras.forEach((p,pi)=>p.forEach(l=>{l=(strip?l.replace(/^\d+[.)]\s+/,''):l).replace(/[*_#`]+/g,'').replace(/\s+/g,' ').trim();if(l)l.split(SP).forEach(x=>S.push({t:x,par:pi}))}));
+ const out=[];
+ for(const o of S){
+  let s=o.t;
+  while(wcount(s)>w*2){
+   const ws=s.split(' '),mid=ws.length/2;let best=-1,bd=1e9;
+   ws.forEach((x,i)=>{if(i>=3&&i<ws.length-3&&/[,;:—–]$/.test(x)&&Math.abs(i-mid)<bd){bd=Math.abs(i-mid);best=i}});
+   if(best<0)break;
+   out.push({t:ws.slice(0,best+1).join(' '),par:o.par});s=ws.slice(best+1).join(' ')}
+  out.push({t:s,par:o.par})}
+ const R=[];
+ out.forEach(o=>{const l=R[R.length-1];if(l&&l.par===o.par&&wcount(o.t)<4&&wcount(l.t)+wcount(o.t)<=w*2)l.t+=' '+o.t;else R.push({t:o.t,par:o.par})});
+ const res=R.map(o=>o.t);
+ res.p=R.map((o,i)=>i<R.length-1&&R[i+1].par!==o.par?.7:/(…|\.\.\.)["”»)]?$/.test(o.t)?.5:/(\?|:)["”»)]?$/.test(o.t)?.25:0);
+ return res;
+}
+async function makeTitle(txt,L){
+ try{const r=String(await llm('Título corto y atractivo (máximo 6 palabras, sin comillas ni punto final) para un vídeo en '+L+' con esta narración: «'+txt.replace(/\s+/g,' ').slice(0,700)+'». Responde SOLO con el título.',0.5)).split('\n')[0].replace(/["«»*#]/g,'').trim();return r&&r.length<=70?r:null}catch(e){return null}
+}
+// Escribe SOLO la narración, en prosa continua. Cortos: una llamada. Largos: primero un esquema y luego cada parte, viendo el esquema completo y lo ya escrito.
+async function writeNarr(topic,mode,total,L){
+ const W=PF().w,words=Math.round(total*W),R=RULES(),T=topic.replace(/\s+/g,' ');
+ const tail=' Devuelve SOLO el texto de la narración en prosa continua (párrafos separados por una línea en blanco), sin títulos, sin numerar las frases, sin markdown, sin acotaciones ni indicaciones de escena, sin cifras ni abreviaturas (los números, con letras).';
+ const clean=t=>String(t).replace(/```[a-z]*/gi,'').replace(/[*_#]+/g,'').replace(/^\s*(\d+[.)]|[-•])\s+/gm,'').trim();
+ const who='Eres un guionista de voz en off de documentales. Idioma: '+L+'. '+STY[styV()]+' ';
+ const src='Tema: «'+T+'». ';
+ const rules=R?' REGLAS OBLIGATORIAS DEL CANAL (las de gancho solo valen en la primera frase y las de cierre en la última): '+R.replace(/\s*\n\s*/g,' ')+' ':'';
+ const facts=FACTS?' DATOS DE REFERENCIA de Wikipedia (úsalos como base y no los contradigas; si no corresponden al tema, ignóralos; no afirmes nada que no esté aquí ni sepas con certeza): '+FACTS+' ':'';
+ const quality=' Escribe para el oído, como UNA sola historia con hilo: cada frase continúa la anterior por causa-efecto y mantiene el mismo sujeto; sin saltos de tema, sin repetir ideas ni palabras, alternando frases cortas y largas; no inventes datos: si no estás seguro, no lo afirmes.';
+ if(words<=450){
+  let line='';
+  if(total<=14){try{line=String(await llm('Vídeo corto de unos '+Math.round(words/2.6)+' segundos sobre «'+T+'» en '+L+'. Elige UN solo dato central que rompa lo que la gente cree del sujeto, su mecanismo real y su consecuencia extrema y concreta. '+(FACTS?'Base de datos de referencia (úsala si corresponde): '+FACTS+' ':'')+'No inventes: si no estás seguro de un dato, elige otro. Responde SOLO con 4 líneas: DATO: ... / POR QUÉ: ... / CONSECUENCIA: ... / CIERRE: una frase que retome el dato inicial.',0.5)).slice(0,700);log('🧭 Línea narrativa: '+line.replace(/\s+/g,' ').slice(0,260))}catch(e){line=''}}
+  return clean(await llm(who+src+rules+facts+(line?' Sigue esta línea narrativa sin desviarte: «'+line.replace(/\s+/g,' ')+'». UN solo dato central; PROHIBIDO saltar a otro tema si no sirve a esa línea.':'')+quality+' Escribe la narración completa: entre '+Math.round(words*.85)+' y '+Math.round(words*1.15)+' palabras, '+'con arco (gancho, desarrollo, giro, cierre), no una lista.'+tail,0.65));
+ }
+ const np=Math.max(3,Math.min(12,Math.round(words/220)));
+ let plan=null;
+ for(let t=0;t<3&&!plan;t++){try{
+  const raw=await llm(who+src+facts+'Planifica una narración de unas '+words+' palabras. Devuelve SOLO un objeto JSON {"premisa":"la idea central en una frase","partes":[{"t":"título interno corto","ideas":"qué se cuenta en esta parte, con los hechos concretos, en 1-2 frases"}]} con unas '+np+' partes en orden'+', con arco (planteamiento, desarrollo, giro, cierre), cada parte continuando la anterior por causa-efecto, no una lista suelta (si el tema es un top o ranking: una parte por elemento, en orden de cuenta atrás y con el número exacto de elementos que pida el tema)'+'. Sin markdown.',0.5),
+  o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));
+  if(Array.isArray(o.partes)&&o.partes.length>=2&&o.partes.every(p=>p&&p.t))plan=o}catch(e){log('reintentando esquema…')}}
+ if(!plan){log('ℹ sin esquema: escribo por partes genéricas');plan={premisa:T.slice(0,200),partes:Array.from({length:np},(_,k)=>({t:'Parte '+(k+1),ideas:'continúa la historia sin repetirte'}))}}
+ const P=plan.partes.length,per=Math.round(words/P),outline=plan.partes.map((p,k)=>(k+1)+'. '+p.t+': '+(p.ideas||'')).join(' | ');
+ let out='';
+ for(let k=0;k<P&&!cancel;k++){
+  const p=plan.partes[k];
+  const tx=clean(await llm(who+src+rules+facts+' IDEA CENTRAL: '+(plan.premisa||'')+'. ESQUEMA COMPLETO: '+outline+'. '+(out?'NARRACIÓN ESCRITA HASTA AHORA (termina aquí; continúa justo donde acaba): «'+out.slice(-1500).replace(/\s+/g,' ')+'». ':'')+'Escribe SOLO la parte '+(k+1)+' de '+P+' («'+p.t+'»: '+(p.ideas||'')+'), de unas '+per+' palabras. '+(k===0?'Empieza con un gancho fuerte. ':'No saludes ni abras con un gancho nuevo; continúa el hilo sin repetir lo ya contado. ')+(k===P-1?'Es la parte final: cierra el vídeo. ':'No concluyas ni cierres: la siguiente parte continúa. ')+quality+tail,0.65));
+  out+=(out?'\n\n':'')+tx;prog(0.1*(k+1)/P);log('✍ parte '+(k+1)+'/'+P+' escrita ('+wcount(tx)+' palabras)')}
+ return out;
+}
+const FIELDS=`"q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (gráfica animada. ÚSALA siempre que la narración hable de una medida o cifra concreta —profundidad, altura, distancia, tamaño, peso, velocidad, temperatura, edad, año, población, porcentaje—, y sobre todo en la escena que da el dato central: los números van en la gráfica, no en la voz. Usa SOLO datos reales (de los DATOS DE REFERENCIA o de la propia frase), nunca inventados. Formato {"t":"título corto","k":tipo,"l":[etiquetas cortas],"v":[números],"u":"unidad corta (m, km, %, años…)","s":"subtítulo opcional"}. Tipos: "depth" para alturas y profundidades respecto al nivel del mar (positivo = por encima, negativo = por debajo; si hay un valor de cada, la gráfica hunde el elemento alto en el profundo y mide lo que queda), "hbar" para comparar tamaños o cantidades, "counter" (UN solo valor: cifra gigante que cuenta hacia arriba), "bar" o "line" para series o evolución en el tiempo, "donut" para partes de un total, "circles" para comparar tamaños a escala (planetas, estrellas, animales: diámetro proporcional), "timeline" para sucesos en el tiempo (v = años en orden, l = qué pasó); si no hay datos numéricos reales, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Incluye además la clave "q3" (solo si la frase tiene dos partes claras y más de unas 18 palabras: búsqueda en inglés de 2 a 4 palabras de lo que se ve durante la SEGUNDA mitad de la frase, distinta de "q", con el mismo sujeto de la guía visual y filmable; si la frase es corta o no tiene dos partes, null).`;
+// ---------- Guía visual global: una sola mirada para todo el vídeo ----------
+let VB='',VBI='';
+async function visualBible(narr){
+ VB=VBI='';
+ try{
+  const raw=String(await llm('Eres director de fotografía de un documental. Lee la narración completa y define la GUÍA VISUAL que usarán TODAS las búsquedas de imágenes y clips, para que el vídeo parezca una sola pieza. Devuelve SOLO un objeto JSON con estas claves (texto corto, en inglés): "sujeto" (el sujeto o lugar principal, con su nombre propio concreto), "epoca" (época o momento: "present day", "1920s"…), "lugar" (lugares o entornos recurrentes), "estilo" (tipo de imagen que debe predominar y ambiente, p. ej. "real photography, natural light, muted colors" o "archival footage, black and white"), "evitar" (lo que NO debe aparecer: ilustraciones, otra época, mapas con texto…), "abstracto" (3 o 4 motivos filmables y concretos, coherentes con ESTA narración, para ilustrar las frases abstractas o de opinión; p. ej. "hands typing, city at night, empty office"). Narración: «'+narr.replace(/\s+/g,' ').slice(0,3500)+'»',0.3));
+  const o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1)),g=k=>String(o[k]==null?'':o[k]).replace(/\s+/g,' ').slice(0,160);
+  VB='Sujeto principal: '+g('sujeto')+'. Época: '+g('epoca')+'. Lugares: '+g('lugar')+'. Estilo de imagen: '+g('estilo')+'. Evitar: '+g('evitar')+'. Motivos para frases abstractas: '+g('abstracto')+'.';
+  VBI=g('estilo');
+  log('🎨 Guía visual: '+VB.slice(0,320));
+ }catch(e){VB=VBI='';log('ℹ sin guía visual global')}
+}
+// Segundo plano en frases largas: cambio de imagen en la pausa de la frase más cercana al centro
+function splitAt(t){const ws=t.split(' '),mid=ws.length/2;let best=-1,bd=1e9;ws.forEach((x,i)=>{if(i>=3&&i<ws.length-3&&/[,;:—–.!?]$/.test(x)&&Math.abs(i+1-mid)<bd){bd=Math.abs(i+1-mid);best=i}});if(best<0||Math.abs((best+1)/ws.length-.5)>.2)best=Math.round(mid)-1;const a=ws.slice(0,best+1).join(' ');return{a,b:ws.slice(best+1).join(' '),f:a.length/t.length}}
+async function getAlt(s,k){
+ const q=s.q3;if(!q||!s.n2)return null;
+ const sa=Object.assign({},s,{q:q,q2:'',w:'',i:q,n:s.n2,_r:0,c:null});
+ try{
+  const all=(await gather(sa,q)).filter(c=>c.t!=='vid');if(!all.length)return null;
+  const i=await rank(sa,all).catch(()=>null);if(i===-1)return null;
+  for(const m of(i==null?all:[all[i],...all.filter((_,j)=>j!==i)]).slice(0,3)){
+   const uk=ukey(m.url);
+   try{used.add(uk);const r=await load(m),hh=r.img?dh(r.img,r.img.width,r.img.height):null;
+    if(hh&&usedH.some(x=>hd(x,hh)<=9)){continue}
+    if(hh)usedH.push(hh);
+    log('🎞 2.º plano de la escena '+(scenes.indexOf(s)+1)+': '+(r.credit||m.p||'imagen'));return r}
+   catch(e){}
+  }
+ }catch(e){}
+ return null;
+}
+async function getMediaFull(s,k){
+ const m=await getMedia(s,k);
+ if(m&&!s.c&&s.q3&&s.n2&&(m.img||m.v))m.alt=await getAlt(s,k);
+ return m;
+}
+// ---------- Panel de escenas: miniaturas, otras opciones y candado ----------
+const escH=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function tileThumb(src){try{const sw=src.videoWidth||src.width,sh=src.videoHeight||src.height;if(!sw||!sh)return null;const c=document.createElement('canvas'),k=Math.min(1,180/Math.max(sw,sh));c.width=Math.max(1,sw*k|0);c.height=Math.max(1,sh*k|0);c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.6)}catch(_){return null}}
+function tileHTML(s,i){
+ const th=s.c?null:tileThumb((s.v&&s.v.videoWidth&&s.v.readyState>=2)?s.v:(s.img||s.fb)),BT='padding:3px 7px;font-size:11px;margin:3px 3px 0 0';
+ return '<div style="position:relative;aspect-ratio:16/9;background:#000;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff">'+(th?'<img src="'+th+'" style="width:100%;height:100%;object-fit:cover">':'<span style="font-size:20px">'+(s.c?'📊':'🎞')+'</span>')
+  +'<b style="position:absolute;left:5px;top:2px;text-shadow:0 0 3px #000">'+(i+1)+'</b>'+(s.alt?'<b style="position:absolute;right:5px;top:2px;font-size:10px;text-shadow:0 0 3px #000">2 planos</b>':'')+'</div>'
+  +'<div style="height:2.7em;overflow:hidden;margin:3px 0;line-height:1.3">'+escH(s.n.slice(0,70))+'</div>'
+  +(s.c?'<small>gráfica</small>':'<button class="s" data-act="alt" data-i="'+i+'" style="'+BT+'">↻ opciones</button><button class="s" data-act="lock" data-i="'+i+'" title="Con candado, el director IA no cambia esta escena" style="'+BT+'">'+(s.locked?'🔒':'🔓')+'</button>');
+}
+function renderTile(i){try{const g=$('bgrid'),d=g&&g.children[i];if(d)d.innerHTML=tileHTML(scenes[i],i)}catch(_){}}
+function buildBoard(){
+ try{const g=$('bgrid');if(!g)return;g.innerHTML='';
+  scenes.forEach((s,i)=>{const d=document.createElement('div');d.style.cssText='display:inline-block;width:31.3%;margin:1%;vertical-align:top;font-size:11px;border:1px solid var(--bd);border-radius:8px;padding:4px';d.innerHTML=tileHTML(s,i);g.appendChild(d)})}
+ catch(e){}
+}
+let ALT=null;
+async function showAlts(i){
+ const s=scenes[i],box=$('balt');if(!s||s.c)return;box.innerHTML='<small>Buscando opciones para la escena '+(i+1)+'…</small>';box.scrollIntoView({block:'nearest'});
+ try{
+  const seen=new Set(),cs=[];
+  for(const q of [s.q,s.q2].filter(Boolean)){for(const c of await gather(s,q)){const u=ukey(c.url);if(!seen.has(u)){seen.add(u);cs.push(c)}}if(cs.length>=8)break}
+  ALT={i,cs:cs.slice(0,9)};
+  box.innerHTML=ALT.cs.length?'<small>Escena '+(i+1)+': toca la que quieras</small><div>'+ALT.cs.map((c,k)=>'<div data-k="'+k+'" style="display:inline-block;position:relative;width:31.3%;margin:1%;cursor:pointer"><img src="'+escH(c.prev||(c.t==='vid'?'':c.url))+'" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:#000">'+(c.t==='vid'?'<b style="position:absolute;right:5px;top:2px;color:#fff;text-shadow:0 0 3px #000">🎞</b>':'')+'</div>').join('')+'</div>':'<small>No he encontrado otras opciones para esa escena.</small>';
+ }catch(e){box.innerHTML='<small>❌ '+escH(em(e))+'</small>'}
+}
+async function pickAlt(k){
+ if(!ALT||$('go').disabled)return;const {i,cs}=ALT,s=scenes[i],m=cs[k],box=$('balt');if(!s||!m)return;
+ box.innerHTML='<small>Cargando la opción elegida…</small>';
+ try{const uk=ukey(m.url),old=s.m&&s.m.alt;dropM(s);used.add(uk);const r=await load(m);r.uk=uk;if(r.blob)delete r.blob;r.alt=old||null;s.m=r;applyM(s);log('✓ Escena '+(i+1)+': opción elegida en el panel');ALT=null;box.innerHTML=''}
+ catch(e){box.innerHTML='<small>❌ No se pudo cargar esa opción ('+escH(em(e))+')</small>'}
+}
+$('bgrid').onclick=e=>{const b=e.target.closest('[data-act]');if(!b)return;const i=+b.dataset.i;if(b.dataset.act==='lock'){scenes[i].locked=!scenes[i].locked;renderTile(i)}else showAlts(i)};
+$('balt').onclick=e=>{const d=e.target.closest('[data-k]');if(d)pickAlt(+d.dataset.k)};
+// ---------- Dibujo: segundo plano y color igualado entre escenas ----------
+const LUMC=document.createElement('canvas'),LUM=new WeakMap();
+function gradeOf(s){
+ const base=GR[styV()]||GR.clasico,src=(s.v&&s.v.videoWidth&&s.v.readyState>=2)?s.v:(s.img||s.fb);if(!src)return base;
+ let l=LUM.get(src);
+ if(l===undefined){l=-1;try{LUMC.width=16;LUMC.height=9;const x=LUMC.getContext('2d',{willReadFrequently:true});x.drawImage(src,0,0,16,9);const d=x.getImageData(0,0,16,9).data;let a=0;for(let i=0;i<d.length;i+=4)a+=d[i]*.3+d[i+1]*.59+d[i+2]*.11;l=a/(d.length/4)/255}catch(_){}LUM.set(src,l)}
+ if(l<0)return base;
+ return base+' brightness('+Math.max(.88,Math.min(1.2,Math.pow(.45/Math.max(.08,l),.6))).toFixed(3)+')';
+}
+function altAtOf(s){const sp=s.a?spanOf(s.a):[0,Math.max(.5,s.n.split(/\s+/).length/WPS())];return Math.max(.25,Math.min(.75,(sp[0]+(sp[1]-sp[0])*s._af)/Math.max(.5,s.dur)))}
+function drawM(s,t,i){
+ if(s.c){cx.filter=GR[styV()]||GR.clasico;return drawChart(s.c,t,s.dur)}
+ if(!s.alt||!s.alt.img||!s._af||!s.dur){cx.filter=gradeOf(s);return drawM0(s,t,i)}
+ const at=altAtOf(s),M=Object.assign({},s,{dur:s.dur*at}),A=Object.assign({},s,{v:null,img:s.alt.img,sal:s.alt.sal,fb:null,fx:null,vs:0,lazy:0,dur:s.dur*(1-at)}),FD=.35/s.dur;
+ if(t<at){cx.filter=gradeOf(M);return drawM0(M,t/at,i)}
+ const ga=cx.globalAlpha,tt=Math.min(1,(t-at)/(1-at));
+ if(t<at+FD){cx.filter=gradeOf(M);drawM0(M,1,i);cx.globalAlpha=ga*(t-at)/FD}
+ cx.filter=gradeOf(A);drawM0(A,tt,i+1);cx.globalAlpha=ga;
+}
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=cleanTitle(topic).slice(0,60);cancel=false;ctx.resume();keepOn();
  $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS,strikeS].forEach(o=>{for(const k in o)delete o[k]});prog(0);
-  autoSty='';if($('sty').value==='auto'){autoSty=await pickSty(topic);log('🎯 Estilo elegido: '+STYN[autoSty])}
+  const words=wcount(topic);let mode=$('nmode').value;if(mode==='auto')mode=words>=20?'guion':'tema';
+  title=cleanTitle(mode==='tema'?topic:topic.split(/(?<=[.!?])\s|\n/)[0]).slice(0,60);
+  log('📝 Modo del texto: '+({guion:'has puesto tu narración: se usa EXACTAMENTE como la escribiste, la IA solo pone voz, imágenes y efectos',tema:'solo un tema: la IA escribe la narración'})[mode]+(mode!==$('nmode').value&&$('nmode').value==='auto'?' (automático; cámbialo en «Mi texto es…» si no es lo que querías)':''));
+  autoSty='';if($('sty').value==='auto'){autoSty=await pickSty(topic.slice(0,600));log('🎯 Estilo elegido: '+STYN[autoSty])}
   if(isV()||styV()==='shorts'){if($('intro').checked||$('outro').checked)log('✂ Formato corto: quito la intro y la pantalla final para que el gancho suene desde el segundo 0');$('intro').checked=$('outro').checked=false}
-  FACTS='';if($('wiki').checked){FACTS=await wikiFacts(await wikiSubject(topic.slice(0,120)));log(FACTS?'📚 Base de datos de Wikipedia: '+FACTS.split(' | ').map(x=>x.split(': ')[0]).join(', '):'📚 Sin artículo de Wikipedia para este tema: el guion irá sin base de datos')}
- const total=Math.max(6,Math.round(+$('min').value*60/(PF().w/2.6))),L=$('lang').value==='es-ES'?'español':'English';
- const corto=total<=14;let LINEA='';
- if(corto){try{LINEA=String(await llm('Vídeo corto de unos '+Math.round(total*PF().w/2.6)+' segundos sobre "'+topic+'" en '+L+'. Elige UN solo dato central que rompa lo que la gente cree del sujeto, su mecanismo real y su consecuencia extrema y concreta. '+(FACTS?'Base de datos de referencia (úsala si corresponde): '+FACTS+' ':'')+'No inventes: si no estás seguro de un dato, elige otro. Responde SOLO con 4 líneas: DATO: ... / POR QUÉ: ... / CONSECUENCIA: ... / CIERRE: una frase que retome el dato inicial.')).slice(0,700);log('🧭 Línea narrativa: '+LINEA.replace(/\s+/g,' ').slice(0,260))}catch(e){LINEA=''}}
+  FACTS='';if($('wiki').checked&&mode!=='guion'){FACTS=await wikiFacts(await wikiSubject(topic.slice(0,120)));log(FACTS?'📚 Base de datos de Wikipedia: '+FACTS.split(' | ').map(x=>x.split(': ')[0]).join(', '):'📚 Sin artículo de Wikipedia para este tema: el guion irá sin base de datos')}
+ const total0=Math.max(6,Math.round(+$('min').value*60/(PF().w/2.6))),L=$('lang').value==='es-ES'?'español':'English';
+ let sents=[],total=total0;
  try{
-  for(let s=0;s<total;s+=10){
-   const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[styV()]}${EXTRA()} ${corto&&LINEA?'Reglas: es un vídeo corto con UNA sola línea narrativa y UN solo dato central. Sigue esta línea sin desviarte: «'+LINEA.replace(/\s+/g,' ')+'». Cada frase continúa la anterior por causa-efecto y mantiene el mismo sujeto; PROHIBIDO saltar a otro tema (fisiología, crías, hábitat…) si no sirve a esa línea; no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; ':'Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; '}no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas ${PF().w} palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (gráfica animada. ÚSALA siempre que la narración hable de una medida o cifra concreta —profundidad, altura, distancia, tamaño, peso, velocidad, temperatura, edad, año, población, porcentaje—, y sobre todo en la escena que da el dato central: los números van en la gráfica, no en la voz. Usa SOLO datos reales (de los DATOS DE REFERENCIA o de la propia frase), nunca inventados. Formato {"t":"título corto","k":tipo,"l":[etiquetas cortas],"v":[números],"u":"unidad corta (m, km, %, años…)","s":"subtítulo opcional"}. Tipos: "depth" para alturas y profundidades respecto al nivel del mar (positivo = por encima, negativo = por debajo; si hay un valor de cada, la gráfica hunde el elemento alto en el profundo y mide lo que queda), "hbar" para comparar tamaños o cantidades, "counter" (UN solo valor: cifra gigante que cuenta hacia arriba), "bar" o "line" para series o evolución en el tiempo, "donut" para partes de un total, "circles" para comparar tamaños a escala (planetas, estrellas, animales: diámetro proporcional), "timeline" para sucesos en el tiempo (v = años en orden, l = qué pasó); si no hay datos numéricos reales, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
-   let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
-   if(!arr)throw new Error('No se pudo obtener el guion');
-   arr.forEach(o=>{const c=normChart(o.c);scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c,
-    o:o.o&&o.o.t?{k:['item','title','stat'].includes(o.o.k)?o.o.k:'title',n:o.o.n!=null?String(o.o.n).slice(0,3):'',t:String(o.o.t).slice(0,40),s:o.o.s?String(o.o.s).slice(0,56):''}:null,
-    amb:o.a&&o.a!=='null'?String(o.a).slice(0,40):'',g:o.g===true&&!!o.w&&o.w!=='null',p:Math.min(1.2,Math.max(0,+o.p||0)),tr:TRP(['fade','cut','dip','flash'].includes(o.tr)?o.tr:'fade')})});
-   prog(0.2*e/total);
+  let narrFull='';
+  if(mode==='guion'){
+   sents=splitScenes(topic,PF().w);if(!sents.length)throw new Error('El texto está vacío');
+   narrFull=sents.join(' ');
+   log('📜 Tu guion se respeta tal cual: '+sents.length+' escenas, '+words+' palabras (la duración sale de tu texto, no del selector)');
+  }else{
+   log('✍ Escribiendo la narración…');
+   narrFull=await writeNarr(topic,mode,total0,L);
+   sents=splitScenes(narrFull,PF().w);
+   if(sents.length<3)throw new Error('La IA no devolvió una narración válida');
+   log('✍ Narración lista: '+sents.length+' escenas, '+wcount(narrFull)+' palabras');
+   if(mode==='tema'&&sents.length>=6&&!cancel){try{const N=sents.length,R=RULES(),raw=await llm(`Eres editor de guiones de documentales. Este es el guion de una voz en off, un array JSON de ${N} frases. Mejóralo SIN cambiar de qué trata ni su orden: quita repeticiones de ideas y de palabras, haz que cada frase suene natural dicha en voz alta y suaviza o elimina cualquier dato del que no estés seguro. Mantén EXACTAMENTE ${N} frases, en el mismo orden y con el mismo tema cada una (las que presentan un elemento de una lista conservan su número y su nombre), en ${L}, sin cifras ni abreviaturas.${R?'\n\nREGLAS DEL CANAL:\n'+R+'\n\nHaz un checklist: para CADA regla indica PASA o FALLA (con un motivo corto) sobre el guion original y reescribe lo que FALLE para que la cumpla.':''}${FACTS?'\n\nDATOS DE REFERENCIA (Wikipedia): '+FACTS+'\nCorrige o elimina cualquier dato que los contradiga.':''}\n\nDevuelve SOLO un objeto JSON {"checklist":[{"regla":"texto corto","r":"PASA" o "FALLA","nota":"motivo breve"}],"guion":[${N} strings]}.\n\nGUION:\n`+JSON.stringify(sents),0.4);
+    let r=null,ck=[];try{const o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));r=o.guion;ck=Array.isArray(o.checklist)?o.checklist:[]}catch(_){}
+    if(!Array.isArray(r)){try{r=parseArr(raw)}catch(_){}}
+    const w0=wcount(sents.join(' ')),w1=Array.isArray(r)?wcount(r.join(' ')):0;
+    if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)&&w1>=w0*.7&&w1<=w0*1.3){{const P0=sents.p;sents=r.map(x=>x.trim());sents.p=P0}narrFull=sents.join(' ');ck.slice(0,10).forEach(c=>log((/FALL/i.test(c&&c.r)?'✗ FALLA (corregido)':'✓ PASA')+' · '+String((c&&c.regla)||'').slice(0,70)+(c&&c.nota?' — '+String(c.nota).slice(0,90):'')));log('✎ guion revisado en una segunda pasada')}
+    else log('ℹ segunda pasada descartada (cambiaba demasiado el texto): me quedo con el original')}catch(e){log('ℹ segunda pasada del guion omitida')}}
   }
-  if(scenes.length>=6&&!cancel){try{const N=scenes.length,R=RULES(),raw=await llm(`Eres editor de guiones de documentales. Este es el guion de una voz en off, un array JSON de ${N} frases, cada una asociada a su escena visual. Mejóralo: quita repeticiones de ideas y de palabras, si la parte central se siente plana, reordénala para que cada frase cree la tensión de la siguiente, sin anunciar que viene algo interesante, haz que cada frase suene natural dicha en voz alta y suaviza o elimina cualquier dato del que no estés seguro. Mantén EXACTAMENTE ${N} frases, en el mismo orden y con el mismo tema cada una (las que presentan un elemento de una lista conservan su número y su nombre), en ${L}, sin cifras ni abreviaturas.${R?'\n\nREGLAS DEL CANAL:\n'+R+'\n\nHaz un checklist: para CADA regla indica PASA o FALLA (con un motivo corto) sobre el guion original y reescribe lo que FALLE para que la cumpla.':''}${FACTS?'\n\nDATOS DE REFERENCIA (Wikipedia): '+FACTS+'\nCorrige o elimina cualquier dato que los contradiga.':''}\n\nDevuelve SOLO un objeto JSON {"checklist":[{"regla":"texto corto","r":"PASA" o "FALLA","nota":"motivo breve"}],"guion":[${N} strings]}.\n\nGUION:\n`+JSON.stringify(scenes.map(s=>s.n)));
-   let r=null,ck=[];try{const o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));r=o.guion;ck=Array.isArray(o.checklist)?o.checklist:[]}catch(_){}
-   if(!Array.isArray(r)){try{r=parseArr(raw)}catch(_){}}
-   if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)){r.forEach((x,i)=>scenes[i].n=x);ck.slice(0,10).forEach(c=>log((/FALL/i.test(c&&c.r)?'✗ FALLA (corregido)':'✓ PASA')+' · '+String((c&&c.regla)||'').slice(0,70)+(c&&c.nota?' — '+String(c.nota).slice(0,90):'')));log('✎ guion revisado en una segunda pasada')}}catch(e){log('ℹ segunda pasada del guion omitida')}}
+  if(cancel)throw new Error('Cancelado');
+  total=sents.length;
+  if(mode!=='tema'){const tt=await makeTitle(narrFull,L);if(tt)title=tt}
+  if(!cancel)await visualBible(narrFull);
+  const ctx=narrFull.replace(/\s+/g,' ').slice(0,600);
+  for(let s=0;s<total;s+=10){
+   const e=Math.min(s+10,total),n=e-s,batch=sents.slice(s,e);
+   const prompt=`Eres director de montaje de documentales. La narración (voz en off) YA está escrita y es INTOCABLE: no la cambies, no la reordenes ni la resumas. Tema: "${topic.replace(/\s+/g,' ').slice(0,300)}". Título del vídeo: "${title}". Idioma: ${L}. Así empieza la narración completa, para que sepas de qué va: «${ctx}». ${STY[styV()]} (Ese estilo solo sirve para elegir imágenes, sonidos y transiciones.) ${VB?'GUÍA VISUAL DEL VÍDEO (todas las búsquedas "q", "q2", "q3" y los prompts "i" deben respetarla y mantener sujeto, época y estilo coherentes entre escenas; si una frase es abstracta, de opinión o de emoción y no hay nada filmable de forma literal, usa un motivo filmable de la guía en vez de una búsqueda genérica): '+VB+' ':''}Para CADA una de estas ${n} frases (escenas ${s+1} a ${e} de ${total}) devuelve un objeto con las claves: ${FIELDS}${FACTS?' DATOS DE REFERENCIA (Wikipedia, solo para las gráficas y los títulos de artículo): '+FACTS+' ':' '}FRASES (JSON): ${JSON.stringify(batch)}. Devuelve SOLO un array JSON con exactamente ${n} objetos, en el mismo orden que las frases.`;
+   let arr;for(let t=0;t<3&&!(arr&&arr.length>=n);t++){try{arr=parseArr(await llm(prompt,0.4))}catch(er){log('reintentando datos visuales…')}}
+   if(!arr||arr.length<n)log('⚠ Faltan datos visuales de algunas escenas ('+s+'–'+e+'): uso búsquedas genéricas del tema');
+   arr=arr||[];
+   batch.forEach((txt,j)=>{const o=arr[j]||{},c=normChart(o.c),fb=String(o.i||o.q||title+' '+txt.slice(0,60));const lg=!c&&o.q3&&o.q3!=='null'&&wcount(txt)>=Math.max(15,Math.round(PF().w*1.4)),sp=lg?splitAt(txt):null;scenes.push({n:txt,n2:sp?sp.b:'',_af:sp?sp.f:0,q3:sp?String(o.q3).slice(0,60):'',i:fb,q:String(o.q||o.i||title).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c,
+    o:o.o&&o.o.t?{k:['item','title','stat'].includes(o.o.k)?o.o.k:'title',n:o.o.n!=null?String(o.o.n).slice(0,3):'',t:String(o.o.t).slice(0,40),s:o.o.s?String(o.o.s).slice(0,56):''}:null,
+    amb:o.a&&o.a!=='null'?String(o.a).slice(0,40):'',g:o.g===true&&!!o.w&&o.w!=='null',p:Math.max(Math.min(1.2,Math.max(0,+o.p||0)),(sents.p&&sents.p[s+j])||0),tr:TRP(['fade','cut','dip','flash'].includes(o.tr)?o.tr:'fade')})});
+   prog(0.1+0.1*e/total);
+  }
   if(!cancel)try{await chartPass()}catch(e){log('ℹ gráficas extra omitidas: '+em(e))}
   showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»).`);
   if($('rvw').checked){$('gui').readOnly=false;$('cont').style.display='block';$('gui').scrollIntoView({block:'center'});log('✏ Edita el guion si quieres (una escena por línea numerada) y pulsa «Continuar con este guion».');await new Promise(r=>contR=r);contR=null;$('cont').style.display='none';$('gui').readOnly=true;if(cancel)throw new Error('Cancelado');
-   $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1])scenes[m[1]-1].n=m[2].trim()});showGui()}
+   $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1]){const sc=scenes[m[1]-1],nt=m[2].trim();if(nt!==sc.n){sc.n=nt;sc.n2='';sc.q3=''}}});showGui()}
   log('Buscando imágenes/video y generando voz…');
   let idx=0,done=0;
-  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMedia(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
+  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMediaFull(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
   await Promise.all([worker(),worker()]);
   if(cancel)throw new Error('Cancelado');
   if($('dir').checked&&$('chk').checked)try{log('🎬 El director revisa el montaje…');await director()}catch(e){log('ℹ director omitido: '+em(e))}
@@ -822,9 +995,9 @@ $('go').onclick=async()=>{
   if(!music&&$('amb').checked){
    try{log('🎵 buscando música libre…');const est=scenes.reduce((a,s)=>a+(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+.3+(s.p||0),0),rm=await getMusic(styV(),est);if(rm){music=rm.b;mAuto=mReal=true;mCred=rm.credit;log('🎵 música real: '+rm.credit)}}catch(e){log('✗ música real: '+em(e))}
    if(!music){try{music=await synthMusic([...topic].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)>>>0,styV());mAuto=true;mReal=false;log('🎵 no encontré música libre: uso música generada')}catch(e){log('✗ música: '+em(e))}}}
-  let t=INTRO();scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});
+  let t=INTRO();scenes.forEach(s=>{s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});
   scenes.forEach(s=>{if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}});credits();
-  $('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));$('esn').disabled=$('mt').disabled=$('th').disabled=false;$('ncp').disabled=$('ntx').disabled=$('nsr').disabled=false;
+  buildBoard();$('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));$('esn').disabled=$('mt').disabled=$('th').disabled=false;$('ncp').disabled=$('ntx').disabled=$('nsr').disabled=false;
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
@@ -959,7 +1132,7 @@ function bestWin(p,f){
  return(bi+k/2)/n;
 }
 const bgc=document.createElement('canvas');
-function drawM(s,t,i){if(s.c)return drawChart(s.c,t,s.dur);
+function drawM0(s,t,i){if(s.c)return drawChart(s.c,t,s.dur);
  if(s.v&&(!s.v.videoWidth||s.v.readyState<2)&&s.fb)s=Object.assign({},s,{v:null,img:s.fb,sal:null});
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const land=W>H,md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=land?0:md===2?(.5-t)*50:md===3?(t-.5)*50:0; // horizontal: recorte centrado simple, sin recorte inteligente ni desplazamiento lateral
