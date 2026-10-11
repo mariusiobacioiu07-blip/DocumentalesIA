@@ -56,6 +56,7 @@ small{color:var(--mut)}
 <input id="mus" type="file" accept="audio/*">
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
 <label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
+<label class="chk"><input id="chk" type="checkbox" checked> Verificar con Gemini que cada imagen cuadra con la narración</label>
 <button id="go">Generar</button>
 <div id="bar"><i></i></div>
 <div id="log"></div>
@@ -154,7 +155,7 @@ async function imgFrom(p,prompt,seed){
  }else r=await fj('https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.huggingface},body:JSON.stringify({inputs:prompt})});
  const b=await r.blob();if(!b.type.startsWith('image'))throw new Error('500 no es imagen');return b;
 }
-async function makeImg(prompt,seed){
+async function makeImg(prompt,seed,soft){
  for(const p of IMGS){
   if(deadI.has(p.id)||(!p.nokey&&!keys[p.id]))continue;
   for(let a=0;a<2;a++){
@@ -162,7 +163,7 @@ async function makeImg(prompt,seed){
    catch(e){if(e.message.startsWith('429')&&!a){await sleep(5000);continue}log('✗ imagen '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadI.add(p.id);break}
   }
  }
- const c=document.createElement('canvas');c.width=1280;c.height=720;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1280,720);
+ if(soft)return null;const c=document.createElement('canvas');c.width=1280;c.height=720;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,1280,720);
  g.addColorStop(0,'#2b2468');g.addColorStop(1,'#0f6b78');x.fillStyle=g;x.fillRect(0,0,1280,720);return await createImageBitmap(c);
 }
 
@@ -186,7 +187,7 @@ const STOCK=[
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,credit:'Pexels – '+p.photographer}))):null}},
  {id:'pixabay-video',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&q=`+enc(q))).json();
-  const a=j.hits.map(h=>{const f=h.videos.medium||h.videos.small;return f&&f.url&&{t:'vid',url:f.url,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
+  const a=j.hits.map(h=>{const f=h.videos.small||h.videos.medium;return f&&f.url&&{t:'vid',url:f.url,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
   return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,credit:'Pixabay – '+h.user}))):null}},
@@ -200,20 +201,32 @@ const STOCK=[
   const a=(j.results||[]).filter(r=>r.thumbnail&&!/gif|svg/i.test(r.filetype||'')).map(r=>({t:'img',url:r.thumbnail,credit:'Openverse – '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+' '+(r.license_version||'')+')'}));
   return a.length?pick(a):null}}
 ];
+let deadV=0;
+async function judge(s,src){
+ if(s._r||!$('chk').checked||!keys.gemini||deadV)return true;
+ const w=src.videoWidth||src.width,h=src.videoHeight||src.height;if(!w)return true;
+ const c=document.createElement('canvas');c.width=384;c.height=Math.round(384*h/w);c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+ const body=JSON.stringify({contents:[{parts:[{inline_data:{mime_type:'image/jpeg',data:c.toDataURL('image/jpeg',.7).split(',')[1]}},{text:`Documental sobre "${title}". Locución de esta escena: "${s.n}". ¿La imagen ilustra bien lo que se dice y encaja con el tema (lugar, animales, época, clima)? Responde solo SI o NO.`}]}]});
+ for(let a=0;a<2;a++){
+  try{const j=await(await fj(`${GL}/${(await models(LLMS[0]))[0]}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body})).json();return /^\s*s[ií]/i.test(j.candidates[0].content.parts[0].text)}
+  catch(e){if(/^429/.test(e.message)&&!a){await sleep(6000);continue}if(fatal(e.message))deadV=1;return true}
+ }
+ return true;
+}
 async function getMedia(s,k){
  const vm=$('vis').value;
  if(s.c)return{};
- const L=STOCK.filter(p=>!p.w||s.w);if(L[0]&&L[0].w&&s.t!=='wiki')L.push(L.shift());
- if(vm==='stock'||(vm==='mix'&&s.t!=='ai'))for(const qq of [s.q,s.q2].filter(Boolean))for(const p of L){
-  if(deadS.has(p.id)||(p.key&&!keys[p.key]))continue;
+ let rej=0;const L=STOCK.filter(p=>!p.w||s.w);if(L[0]&&L[0].w&&s.t!=='wiki')L.push(L.shift());
+ if(s._r||vm==='stock'||(vm==='mix'&&s.t!=='ai'))for(const qq of [s.q,s.q2].filter(Boolean))for(const p of L){
+  if(rej>3||deadS.has(p.id)||(p.key&&!keys[p.key]))continue;
   try{
    const m=await p.f(qq,s);if(!m)continue;used.add(m.url);
    const b=await(await fj(m.url)).blob();
-   if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.src=URL.createObjectURL(b);await Promise.race([new Promise((r,j)=>{v.onloadeddata=r;v.onerror=j}),sleep(8000).then(()=>{throw new Error('video timeout')})]);return{v,credit:m.credit}}
-   return{img:await createImageBitmap(b),credit:m.credit};
-  }catch(e){log('✗ '+p.id+': '+e.message.slice(0,40));if(fatal(e.message))deadS.add(p.id)}
+   if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.style.cssText='position:fixed;left:-9999px;width:2px;height:2px';document.body.appendChild(v);v.src=URL.createObjectURL(b);v.load();v.play().catch(()=>{});await Promise.race([new Promise((r,j)=>{v.onloadeddata=()=>{v.pause();r()};v.onerror=j}),sleep(15000).then(()=>{throw new Error('video timeout')})]);if(await judge(s,v))return{v,credit:m.credit};log('↺ descartada: '+p.id);rej++;continue}
+   const im=await createImageBitmap(b);if(await judge(s,im))return{img:im,credit:m.credit};log('↺ descartada: '+p.id);rej++;continue;
+  }catch(e){log('✗ '+p.id+': '+e.message.slice(0,40));if(fatal(e.message)||/timeout/.test(e.message))deadS.add(p.id)}
  }
- return{img:await makeImg(s.i+', cinematic documentary still, muted film color grading, 35mm, natural light',k)};
+ const im=await makeImg(s.i+', cinematic documentary still, muted film color grading, 35mm, natural light',k,!s._r);if(im)return{img:im};if(!s._r){s._r=1;return getMedia(s,k)}return{img:await makeImg('',k)};
 }
 
 // ---------- Voz natural ----------
@@ -259,12 +272,12 @@ let scenes=[],title='',cancel=false;
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=topic.slice(0,60);cancel=false;ctx.resume();
- $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());prog(0);
- const total=Math.round(+$('min').value*6),L=$('lang').value==='es-ES'?'español':'English';
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;prog(0);
+ const total=Math.round(+$('min').value*12),L=$('lang').value==='es-ES'?'español':'English';
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (narración de unas 25 palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico ni del tema en general), "q2" (otra búsqueda alternativa y más amplia, en inglés), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas, "ai" en una de cada cuatro escenas aproximadamente, para conceptos abstractos, recreaciones históricas o cosas imposibles de fotografiar) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas 13 palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (otra búsqueda alternativa y más amplia, en inglés), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas, "ai" en una de cada cuatro escenas aproximadamente, para conceptos abstractos, recreaciones históricas o cosas imposibles de fotografiar) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
    arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null})});
@@ -278,7 +291,7 @@ $('go').onclick=async()=>{
   log('Generando voz (una sola voz para todo el video)…');
   const vp=await voices();if(cancel)throw new Error('Cancelado');
   if(!vp){scenes.forEach(s=>s.a=null);log('⚠ No se pudo generar la voz; el video saldrá sin voz.')}
-  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.5;s.st=t;t+=s.dur});
+  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=false;pos=0;render(0);
@@ -287,7 +300,7 @@ $('go').onclick=async()=>{
 };
 
 // ---------- Edición / render ----------
-let W=1280,H=720;const cv=$('cv'),cx=cv.getContext('2d'),X=0.9;let stopF=false,total=0,paused=false,playing=false,rc=false,drag=false,pos=0,seekT=null;
+let W=1280,H=720;const cv=$('cv'),cx=cv.getContext('2d'),X=0.5;let stopF=false,total=0,paused=false,playing=false,rc=false,drag=false,pos=0,seekT=null;
 const DUR=()=>{const l=scenes[scenes.length-1];return l&&l.dur?l.st+l.dur+.5:0},tf=t=>Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0'),pl=()=>{$('play').textContent=playing&&!paused?'⏸':'▶'};
 function ui(T){if(drag)return;const d=DUR();$('sk').value=d?T/d*1000:0;$('tm').textContent=tf(T)+' / '+tf(d)}
 function chunks(t,m){const o=[];let l='';for(const w of t.split(/\s+/)){l=l?l+' '+w:w;if(l.length>=m||(l.length>=m*.5&&/[,.;:!?]$/.test(w))){o.push(l);l=''}}if(l)o.push(l);return o}
@@ -320,7 +333,7 @@ function render(T){ui(T);
  scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i)&&playing&&!paused;if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
- if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.5,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
+ if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.3,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
   const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(c,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
   cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l,W/2,y0+k*lh))}
  if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.font='bold '+(W>H?44:40)+'px Georgia,serif';cx.textAlign='left';const tl=wrap(title,W-180),ty=W>H?142:200;cx.fillStyle='#e8c15a';cx.fillRect(80,ty-42,6,tl.length*50-8);cx.fillStyle='#fff';tl.forEach((l,k)=>cx.fillText(l.trim(),100,ty+k*50));cx.globalAlpha=1}
