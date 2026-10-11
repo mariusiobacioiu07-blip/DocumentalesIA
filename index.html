@@ -80,6 +80,7 @@ small{color:var(--mut)}
 const $=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const fj=async(u,o={})=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),90000);try{const r=await fetch(u,{...o,signal:c.signal});if(!r.ok)throw new Error(r.status+' '+(await r.text()).replace(/\s+/g,' ').slice(0,200));return r}finally{clearTimeout(t)}};
 const LLMS=[
+ {id:'openai',name:'ChatGPT',type:'openai',url:'https://api.openai.com/v1/responses',model:'gpt-6-luna'},
  {id:'gemini',name:'Gemini',type:'gemini',model:'gemini-2.0-flash'},
  {id:'groq',name:'Groq',url:'https://api.groq.com/openai/v1/chat/completions',model:'llama-3.3-70b-versatile'},
  {id:'cerebras',name:'Cerebras',url:'https://api.cerebras.ai/v1/chat/completions',model:'llama-3.3-70b'},
@@ -88,7 +89,7 @@ const LLMS=[
  {id:'pollinations',name:'Pollinations texto',nokey:1,url:'https://text.pollinations.ai/openai',model:'openai'}
 ];
 const IMGS=[{id:'gemini'},{id:'together'},{id:'huggingface'},{id:'pollinations',nokey:1}];
-const KEYIDS=['pexels','pixabay','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
+const KEYIDS=['openai','pexels','pixabay','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
 let keys={};try{keys=JSON.parse(localStorage.getItem('vidia_keys')||'{}')}catch(e){}
 $('keys').innerHTML=KEYIDS.map(k=>`<label>${k}</label><input data-k="${k}" type="password" value="${keys[k]||''}" autocomplete="off">`).join('');
 $('keys').oninput=e=>{keys[e.target.dataset.k]=e.target.value.trim();try{localStorage.setItem('vidia_keys',JSON.stringify(keys))}catch(_){}};
@@ -108,6 +109,9 @@ async function models(p){
   if(p.type==='gemini'){
    const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),v=n=>parseFloat((n.match(/gemini-([\d.]+)/)||[0,0])[1]);
    ms=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-flash(-lite)?$/.test(m.name)).sort((a,b)=>v(b.name)-v(a.name)||(/lite/.test(a.name)-/lite/.test(b.name))).map(m=>m.name.replace('models/',''));
+  }else if(p.type==='openai'){
+   const j=await(await fj('https://api.openai.com/v1/models',{headers:{Authorization:'Bearer '+keys.openai}})).json();
+   ms=[p.model,...(j.data||[]).map(m=>m.id).filter(i=>/^gpt-[\d.]+/.test(i)&&!/mini|nano|audio|realtime|image|tts|transcribe|search|codex|instruct|preview|chat-latest/.test(i)).sort().reverse()];
   }else if(LIST[p.id]){
    const j=await(await fj(LIST[p.id],{headers:keys[p.id]?{Authorization:'Bearer '+keys[p.id]}:{}})).json();
    let ids=(j.data||[]).map(m=>m.id).filter(i=>!BADM.test(i));
@@ -128,6 +132,10 @@ async function callLLM(p,prompt){
  let err;
  for(const m of await models(p)){
   try{
+   if(p.type==='openai'){
+    const j=await(await fj(p.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,input:prompt,store:false})})).json();
+    const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');return tx;
+   }
    if(p.type==='gemini'){
     const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
     return j.candidates[0].content.parts[0].text;
