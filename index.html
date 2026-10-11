@@ -69,7 +69,7 @@ small{color:var(--mut)}
 <div class="card">
 <canvas id="cv" width="1280" height="720"></canvas>
 <div class="row" style="align-items:center;margin-top:8px"><button id="play" class="s" disabled style="flex:none;margin:0;width:52px">▶</button><input id="sk" type="range" min="0" max="1000" value="0" disabled style="border:0;background:none;padding:0"><small id="tm" style="flex:none">0:00 / 0:00</small></div>
-<button id="rec" class="s" disabled>⬇ Exportar (.webm con voz)</button>
+<button id="rec" class="s" disabled>⬇ Exportar vídeo (con voz)</button>
 <button id="stop" class="s">■ Parar</button>
 <br><small>La exportación dura lo mismo que el video. No cambies de pestaña mientras graba.</small>
 <label>Créditos (pégalos en la descripción)</label>
@@ -634,17 +634,23 @@ async function run(rec,from=0){
    g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.12:.18,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
  if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=mAuto?.17:.12;n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
- if(rec){const mt=['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
+ if(rec){const mt=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
   mr.ondataavailable=e=>ch.push(e.data);mr.start(1000)}
  await new Promise(res=>{const f=()=>{const T=ctx.currentTime-t0+from;if(stopF||T>total)return res();render(pos=Math.max(from,T));requestAnimationFrame(f)};f()});
  srcs.forEach(n=>{try{n.stop()}catch(_){}});scenes.forEach(s=>s.v&&s.v.pause());au.pause();au.srcObject=null;playing=rc=false;pl();if(!rec){if(seekT!=null){const q=seekT;seekT=null;return run(false,q)}pos=0;render(0)}
- if(rec){mr.stop();await new Promise(r=>mr.onstop=r);const a=document.createElement('a');const mp=mr.mimeType.includes('mp4');a.href=URL.createObjectURL(new Blob(ch,{type:mr.mimeType}));a.download='documental-ia.'+(mp?'mp4':'webm');a.click()}
+ if(rec){mr.stop();await new Promise(r=>mr.onstop=r);
+  // iOS bloquea las descargas automáticas tras una grabación larga (y en la app de inicio no hay descargas): se guarda con un botón que abre el menú de compartir
+  const ty=mr.mimeType||'video/mp4',blob=new Blob(ch,{type:ty}),url=URL.createObjectURL(blob),f=new File([blob],'documental-ia.'+(ty.includes('mp4')?'mp4':'webm'),{type:ty});
+  let d=$('dl');if(!d){d=document.createElement('div');d.id='dl';d.style.marginTop='10px';$('rec').insertAdjacentElement('afterend',d)}
+  d.innerHTML='<button class="s" id="dls">💾 Guardar vídeo ('+Math.round(blob.size/1e5)/10+' MB)</button><video controls playsinline src="'+url+'" style="width:100%;margin-top:8px;border-radius:8px"></video>';
+  $('dls').onclick=async()=>{try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}const a=document.createElement('a');a.href=url;a.download=f.name;a.click()};
+  d.scrollIntoView({behavior:'smooth',block:'center'})}
 }
 $('play').onclick=()=>{if(rc)return;if(!playing)return run(false,pos>=DUR()-1?0:pos);paused=!paused;paused?ctx.suspend():ctx.resume();pl()};
 $('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textContent=tf(t)+' / '+tf(DUR());if(!playing)render(t)};
 $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
-$('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Video exportado.'))};
+$('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Grabación terminada: pulsa «Guardar vídeo» debajo del botón de exportar.'))};
 $('stop').onclick=()=>{keepOff();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 </script>
 </body>
