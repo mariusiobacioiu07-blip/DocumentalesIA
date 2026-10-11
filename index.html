@@ -63,6 +63,10 @@ small{color:var(--mut)}
 <label>Música de fondo (opcional, tu propio archivo libre de derechos)</label>
 <input id="mus" type="file" accept="audio/*">
 <label class="chk"><input id="amb" type="checkbox" checked> Música de fondo y efectos automáticos (busca música libre real; si no encuentra, la genera)</label>
+<label>🎚 Volumen de la música (por defecto 50; la voz siempre manda: la música baja sola cuando habla)</label>
+<input id="mvol" type="range" min="0" max="100" value="50">
+<label>🎚 Volumen del sonido ambiente (olas, viento…)</label>
+<input id="avol" type="range" min="0" max="100" value="50">
 <label class="chk"><input id="intro" type="checkbox" checked> Intro con título (3 s)</label>
 <label class="chk"><input id="outro" type="checkbox" checked> Pantalla final «suscríbete» (5 s)</label>
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
@@ -411,7 +415,7 @@ async function rank(s,cs){
  for(const v of J){
   const sub=th.slice(0,v.max),vids=sub.map((x,k)=>cs[x.i].t==='vid'?k:-1).filter(k=>k>=0),
   t=`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Se te muestran ${sub.length} imágenes numeradas desde 0.${vids.length?' Las imágenes '+vids.join(', ')+' son el primer fotograma de clips de vídeo (a igualdad de calidad, prefiere un clip).':''}${isV()?' El vídeo es VERTICAL 9:16: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''}
-Reglas estrictas: 1) Solo vale si el sujeto principal es EXACTAMENTE el sujeto obligatorio (misma especie, lugar o época), no uno parecido ni de otra especie. 2) Rechaza dibujos, ilustraciones, animaciones, dibujos animados, renders 3D, juguetes, collages, imágenes con texto o marcas de agua y las de baja calidad. 3) Debe ser coherente con lo que dice la locución (si habla de cazar en grupo o de comer, debe verse esa acción o el grupo; un animal de la especie correcta sin esa acción solo sirve si es lo mejor disponible). 4) Ante la duda, descarta.
+Reglas estrictas: 1) Solo vale si el sujeto principal es EXACTAMENTE el sujeto obligatorio (misma especie, lugar o época), no uno parecido ni de otra especie. 2) Rechaza dibujos, ilustraciones, animaciones, dibujos animados, renders 3D, juguetes, collages, imágenes con texto o marcas de agua y las de baja calidad. 3) Debe ser coherente con lo que dice la locución (si habla de cazar en grupo o de comer, debe verse esa acción o el grupo; un animal de la especie correcta sin esa acción solo sirve si es lo mejor disponible). 4) Rechaza plantillas, mockups, hojas o marcos en blanco, fondos genéricos y cualquier imagen cuyo tema no sea el de la locución aunque sea bonita (una imagen bonita pero de otro tema NO sirve, ni para el sujeto de la escena ni para una cifra). 5) Ante la duda, descarta.
 Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto correcto? sí/no". Termina con una última línea "RESPUESTA: n" con el número de la mejor imagen que cumpla TODAS las reglas, o "RESPUESTA: -1" si ninguna.`;
   try{
    const tx=String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,''),rm=tx.match(/RESPUESTA\s*[:=]?\s*\**\s*(-?\d+)/i),n=parseInt(rm?rm[1]:tx.match(/-?\d+/g).pop());
@@ -737,7 +741,7 @@ async function director(){const L=[];
   if(d)L.push({s,i,d})}
  const bad=[];
  for(let b=0;b<L.length&&!cancel;b+=4){const part=L.slice(b,b+4),D=part.map(x=>x.d),
-  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden (algunas son un fotograma de un clip de vídeo). Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
+  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden (algunas son un fotograma de un clip de vídeo). Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad, o que es una plantilla, mockup, hoja en blanco o escena genérica sin relación con la locución. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
   for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(o&&o.ok===false&&part[o.i])bad.push({x:part[o.i],why:String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}
   if(b%20===0)log('🎬 Director: revisadas '+Math.min(b+4,L.length)+' de '+L.length)}
  log('🎬 Director: '+(bad.length?bad.length+' escenas no encajan':'todo en orden'));
@@ -786,10 +790,10 @@ $('go').onclick=async()=>{
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[styV()]}${EXTRA()} ${corto&&LINEA?'Reglas: es un vídeo corto con UNA sola línea narrativa y UN solo dato central. Sigue esta línea sin desviarte: «'+LINEA.replace(/\s+/g,' ')+'». Cada frase continúa la anterior por causa-efecto y mantiene el mismo sujeto; PROHIBIDO saltar a otro tema (fisiología, crías, hábitat…) si no sirve a esa línea; no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; ':'Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; '}no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas ${PF().w} palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[styV()]}${EXTRA()} ${corto&&LINEA?'Reglas: es un vídeo corto con UNA sola línea narrativa y UN solo dato central. Sigue esta línea sin desviarte: «'+LINEA.replace(/\s+/g,' ')+'». Cada frase continúa la anterior por causa-efecto y mantiene el mismo sujeto; PROHIBIDO saltar a otro tema (fisiología, crías, hábitat…) si no sirve a esa línea; no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; ':'Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; '}no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas ${PF().w} palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (gráfica animada. ÚSALA siempre que la narración hable de una medida o cifra concreta —profundidad, altura, distancia, tamaño, peso, velocidad, temperatura, edad, año, población, porcentaje—, y sobre todo en la escena que da el dato central: los números van en la gráfica, no en la voz. Usa SOLO datos reales (de los DATOS DE REFERENCIA o de la propia frase), nunca inventados. Formato {"t":"título corto","k":tipo,"l":[etiquetas cortas],"v":[números],"u":"unidad corta (m, km, %, años…)","s":"subtítulo opcional"}. Tipos: "depth" para alturas y profundidades respecto al nivel del mar (positivo = por encima, negativo = por debajo; si hay un valor de cada, la gráfica hunde el elemento alto en el profundo y mide lo que queda), "hbar" para comparar tamaños o cantidades, "counter" (UN solo valor: cifra gigante que cuenta hacia arriba), "bar" o "line" para series o evolución en el tiempo, "donut" para partes de un total, "circles" para comparar tamaños a escala (planetas, estrellas, animales: diámetro proporcional), "timeline" para sucesos en el tiempo (v = años en orden, l = qué pasó); si no hay datos numéricos reales, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
-   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null,
+   arr.forEach(o=>{const c=normChart(o.c);scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c,
     o:o.o&&o.o.t?{k:['item','title','stat'].includes(o.o.k)?o.o.k:'title',n:o.o.n!=null?String(o.o.n).slice(0,3):'',t:String(o.o.t).slice(0,40),s:o.o.s?String(o.o.s).slice(0,56):''}:null,
     amb:o.a&&o.a!=='null'?String(o.a).slice(0,40):'',g:o.g===true&&!!o.w&&o.w!=='null',p:Math.min(1.2,Math.max(0,+o.p||0)),tr:TRP(['fade','cut','dip','flash'].includes(o.tr)?o.tr:'fade')})});
    prog(0.2*e/total);
@@ -798,6 +802,7 @@ $('go').onclick=async()=>{
    let r=null,ck=[];try{const o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));r=o.guion;ck=Array.isArray(o.checklist)?o.checklist:[]}catch(_){}
    if(!Array.isArray(r)){try{r=parseArr(raw)}catch(_){}}
    if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)){r.forEach((x,i)=>scenes[i].n=x);ck.slice(0,10).forEach(c=>log((/FALL/i.test(c&&c.r)?'✗ FALLA (corregido)':'✓ PASA')+' · '+String((c&&c.regla)||'').slice(0,70)+(c&&c.nota?' — '+String(c.nota).slice(0,90):'')));log('✎ guion revisado en una segunda pasada')}}catch(e){log('ℹ segunda pasada del guion omitida')}}
+  if(!cancel)try{await chartPass()}catch(e){log('ℹ gráficas extra omitidas: '+em(e))}
   showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»).`);
   if($('rvw').checked){$('gui').readOnly=false;$('cont').style.display='block';$('gui').scrollIntoView({block:'center'});log('✏ Edita el guion si quieres (una escena por línea numerada) y pulsa «Continuar con este guion».');await new Promise(r=>contR=r);contR=null;$('cont').style.display='none';$('gui').readOnly=true;if(cancel)throw new Error('Cancelado');
    $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1])scenes[m[1]-1].n=m[2].trim()});showGui()}
@@ -826,6 +831,11 @@ $('go').onclick=async()=>{
  keepOff();$('go').disabled=false;
 };
 
+async function chartPass(){
+ const N=scenes.length,have=scenes.filter(s=>s.c).length,want=Math.max(1,Math.round(N/6));if(have>=want||N<3)return;
+ const L=$('lang').value==='es-ES'?'español':'English',a=parseArr(await llm(`Eres editor de infografías de documentales. Estas son las frases de la voz en off (índice desde 0); las cifras están escritas con letras:\n${scenes.map((s,i)=>i+': '+(s.c?'[YA TIENE GRÁFICA] ':'')+(s.o&&s.o.k==='stat'?'[CIFRA EN PANTALLA: dale prioridad] ':'')+s.n).join('\n')}\n\nDATOS DE REFERENCIA (Wikipedia): ${FACTS||'(ninguno)'}\n\nElige hasta ${want-have} frases SIN gráfica que hablen de una medida o cifra concreta (profundidad, altura, distancia, tamaño, año, población, porcentaje…) y diseña su gráfica animada con cifras REALES: solo las que aparezcan en la frase o en los datos de referencia, jamás inventadas ni aproximadas por tu cuenta. Títulos y etiquetas en ${L}. Tipos: "depth" (alturas y profundidades respecto al nivel del mar: positivo = por encima, negativo = por debajo; si hay un valor de cada, la gráfica hunde el elemento alto en el profundo y mide lo que queda), "hbar" (comparar cantidades), "counter" (UN solo valor, cifra gigante), "bar", "line" (evolución), "donut" (partes de un total), "circles" (tamaños a escala), "timeline" (v = años en orden, l = sucesos). Formato de cada una: {"i":índice,"c":{"t":"título corto","k":tipo,"l":[etiquetas cortas],"v":[números],"u":"unidad corta","s":"subtítulo opcional"}}. Si no hay cifras fiables, devuelve []. Devuelve SOLO el array JSON.`));
+ let n=0;a.forEach(o=>{const s=o&&scenes[o.i],c=normChart(o&&o.c);if(s&&c&&!s.c&&n<want-have){s.c=c;n++}});
+ if(n)log('📊 '+n+' gráfica(s) animada(s) añadida(s) en escenas con cifras')}
 // ---------- Edición / render ----------
 let W=1280,H=720,K=1;const cv=$('cv'),cx=cv.getContext('2d'),X=0.5;let stopF=false,total=0,paused=false,playing=false,rc=false,drag=false,pos=0,seekT=null;
 const DUR=()=>{const l=scenes[scenes.length-1];return l&&l.dur?l.st+l.dur+.5+TAIL():0},tf=t=>Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0'),pl=()=>{$('play').textContent=playing&&!paused?'⏸':'▶'};
@@ -837,17 +847,96 @@ $('res').onchange=()=>{if(playing||rc){$('res').value=String(K);return}setFmt();
 $('fit').onchange=()=>{if(scenes.length&&scenes[0].m&&!playing)render(pos)};
 setFmt();
 function wrap(t,w){const o=[];let l='';for(const wd of t.split(' ')){const m=l+wd+' ';if(cx.measureText(m).width>w&&l){o.push(l);l=wd+' '}else l=m}o.push(l);return o}
-function drawChart(c,t){
- const e=1-Math.pow(1-Math.min(1,t*2.5),3),V=c.v,n=V.length,mx=Math.max(...V,1)*1.1,x0=100,x1=W-70,y0=H*.24,y1=H*.78,fs=W>H?30:26;
- const g=cx.createLinearGradient(0,0,W,H);g.addColorStop(0,'#0e1a30');g.addColorStop(1,'#1d2d4a');cx.fillStyle=g;cx.fillRect(0,0,W,H);
- cx.textAlign='center';cx.fillStyle='#fff';cx.font='bold '+(fs+10)+'px system-ui,sans-serif';cx.fillText(c.t,W/2,y0-70);
- cx.strokeStyle='rgba(255,255,255,.14)';cx.lineWidth=2;
- for(let k=0;k<=4;k++){const y=y1-(y1-y0)*k/4;cx.beginPath();cx.moveTo(x0,y);cx.lineTo(x1,y);cx.stroke()}
- const px=j=>x0+(x1-x0)*(c.k==='line'?j/(n-1):(j+.5)/n),py=j=>y1-(y1-y0)*V[j]/mx*e;
- if(c.k==='line'){cx.strokeStyle='#e8c15a';cx.lineWidth=6;cx.beginPath();V.forEach((_,j)=>j?cx.lineTo(px(j),py(j)):cx.moveTo(px(j),py(j)));cx.stroke();cx.fillStyle='#e8c15a';V.forEach((_,j)=>{cx.beginPath();cx.arc(px(j),py(j),9,0,7);cx.fill()})}
- else{const bw=(x1-x0)/n*.6;V.forEach((_,j)=>{cx.fillStyle='#5b8cff';cx.fillRect(px(j)-bw/2,py(j),bw,y1-py(j))})}
- cx.font=fs+'px system-ui,sans-serif';
- V.forEach((v,j)=>{cx.fillStyle='#fff';cx.fillText(Math.round(v*e*10)/10,px(j),py(j)-14);cx.fillStyle='#b8c2d6';cx.fillText((c.l[j]||'').slice(0,12),px(j),y1+44)});
+// ---------- Gráficas animadas ----------
+const CK=['bar','line','hbar','depth','counter','donut','circles','timeline'],PAL=['#5b8cff','#e8c15a','#4fd1c5','#f6866a','#b794f6','#7bd88f','#f08fc0','#9fb0cc'];
+const clamp01=x=>Math.max(0,Math.min(1,x)),eo=x=>1-Math.pow(1-clamp01(x),3);
+function fmtN(v,d){const r=d?Math.round(v*10)/10:Math.round(v),p=String(Math.abs(r)).split('.');p[0]=p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.');return(r<0?'-':'')+p.join(',')}
+function normChart(c){if(!c||!Array.isArray(c.v))return null;const k=CK.includes(c.k)?c.k:'bar',v=c.v.map(Number).filter(isFinite).slice(0,8);if(!v.length||(k!=='counter'&&v.length<2))return null;if(k==='donut'&&v.some(x=>x<0))return null;return{t:String(c.t||'').slice(0,60),k,l:(Array.isArray(c.l)?c.l:[]).map(x=>String(x).slice(0,28)),v,u:String(c.u||'').slice(0,10),s:String(c.s||'').slice(0,70)}}
+function drawChart(c,t,dur){
+ const ts=t*(dur||5),V=c.v,n=V.length,k=c.k,u=c.u?' '+c.u:'',land=W>H,fs=land?30:26,dec=V.some(x=>x%1!==0),ES=$('lang').value==='es-ES',
+  x0=land?110:92,x1=W-(land?70:50),y0=H*(k==='depth'?(land?.4:.34):(land?.33:.28)),y1=H*(k==='depth'?(land?.76:.66):(land?.71:.66)),F=f=>(f||fs)+'px system-ui,sans-serif',
+  fit=(s,w,f,b)=>{let z=f;cx.font=(b?'bold ':'')+F(z);while(cx.measureText(s).width>w&&z>13){z--;cx.font=(b?'bold ':'')+F(z)}};
+ const bg=cx.createLinearGradient(0,0,W,H);bg.addColorStop(0,'#0b1628');bg.addColorStop(1,'#1b2c4a');cx.fillStyle=bg;cx.fillRect(0,0,W,H);
+ const gl=cx.createRadialGradient(W/2,H*.5,0,W/2,H*.5,H*.8);gl.addColorStop(0,'rgba(91,140,255,.16)');gl.addColorStop(1,'rgba(91,140,255,0)');cx.fillStyle=gl;cx.fillRect(0,0,W,H);
+ const title=()=>{cx.textAlign='center';cx.fillStyle='#fff';let f=fs+8,ls;cx.font='bold '+f+'px system-ui,sans-serif';
+  if(land){while(cx.measureText(c.t).width>W-140&&f>20){f-=2;cx.font='bold '+f+'px system-ui,sans-serif'}ls=[c.t]}else ls=wrap(c.t,W-100).map(l=>l.trim()).slice(0,2);
+  const ty=H*(land?.2:.13);ls.forEach((l,j)=>cx.fillText(l,W/2,ty+j*(f+8)));const ta=ty+(ls.length-1)*(f+8);
+  cx.fillStyle='#e8c15a';cx.fillRect(W/2-40,ta+14,80*eo(ts/.6),4);
+  if(c.s){cx.font=F(fs-6);cx.fillStyle='#b8c2d6';cx.fillText(c.s,W/2,ta+52)}};
+ const grid=mx=>{cx.strokeStyle='rgba(255,255,255,.12)';cx.lineWidth=2;cx.font=F(18);cx.textAlign='right';for(let g=0;g<=4;g++){const y=y1-(y1-y0)*g/4;cx.beginPath();cx.moveTo(x0,y);cx.lineTo(x1,y);cx.stroke();cx.fillStyle='#7f8fae';cx.fillText(fmtN(mx*g/4,dec&&mx<20),x0-10,y+6)}cx.textAlign='center'};
+ // cifra gigante que cuenta hacia arriba
+ if(k==='counter'){title();const e=eo(ts/1.8),big=land?150:116,cy=H*(land?.54:.46),ub=Math.round(big*.4);
+  cx.font='900 '+big+'px system-ui,sans-serif';const nw=cx.measureText(fmtN(V[0],dec)).width;cx.font='bold '+ub+'px system-ui,sans-serif';const uw=c.u?cx.measureText(' '+c.u).width:0,xs=W/2-(nw+uw)/2;
+  cx.textAlign='left';cx.font='900 '+big+'px system-ui,sans-serif';cx.fillStyle='#fff';cx.shadowColor='rgba(232,193,90,.55)';cx.shadowBlur=32;cx.fillText(fmtN(V[0]*e,dec),xs,cy);cx.shadowBlur=0;
+  cx.font='bold '+ub+'px system-ui,sans-serif';cx.fillStyle='#e8c15a';if(c.u)cx.fillText(' '+c.u,xs+nw,cy);
+  cx.fillRect(xs,cy+24,(nw+uw)*e,5);cx.textAlign='center';cx.font=F(fs+2);cx.fillStyle='#b8c2d6';cx.fillText(c.l[0]||'',W/2,cy+76);return}
+
+ // círculos a escala (planetas, estrellas, animales: el diámetro es proporcional al valor)
+ if(k==='circles'){title();const mx=Math.max(...V.map(Math.abs),1),sl=(x1-x0)/n,R=Math.min(sl*.46,(y1-y0)*.5),by=(y0+y1)/2+R*.4;
+  V.forEach((v,j)=>{const ej=eo((ts-.15*j)/.9),r=Math.max(7,R*Math.abs(v)/mx)*ej,x=x0+sl*(j+.5),g=cx.createRadialGradient(x-r*.3,by-r*.3,r*.1,x,by,r);g.addColorStop(0,'#f3d77a');g.addColorStop(1,PAL[j%8]);
+   cx.fillStyle=g;cx.beginPath();cx.arc(x,by-r,r,0,7);cx.fill();cx.textAlign='center';cx.font='bold '+F(fs-2);cx.fillStyle='#fff';cx.fillText(fmtN(v*ej,dec)+u,x,by+34);fit(c.l[j]||'',sl-8,fs-4,0);cx.fillStyle='#b8c2d6';cx.fillText(c.l[j]||'',x,by+34+fs)});return}
+ // línea de tiempo (v = años o fechas en orden; l = qué pasó)
+ if(k==='timeline'){title();const mn=Math.min(...V),mx=Math.max(...V),sp=(mx-mn)||1,ya=(y0+y1)/2+20,e=eo(ts/1.6),xl=v=>x0+30+(x1-x0-60)*(v-mn)/sp;
+  cx.strokeStyle='rgba(255,255,255,.35)';cx.lineWidth=4;cx.beginPath();cx.moveTo(x0+30,ya);cx.lineTo(x0+30+(x1-x0-60)*e,ya);cx.stroke();
+  V.forEach((v,j)=>{const x=xl(v);if((x-x0-30)/(x1-x0-60)>e+.001)return;const up=j%2===0,ey=ya+(up?-1:1)*70;cx.strokeStyle='#e8c15a';cx.lineWidth=3;cx.beginPath();cx.moveTo(x,ya);cx.lineTo(x,ey);cx.stroke();cx.fillStyle='#e8c15a';cx.beginPath();cx.arc(x,ya,10,0,7);cx.fill();
+   cx.textAlign='center';cx.font='bold '+F(fs+2);cx.fillStyle='#fff';cx.fillText(String(Math.round(v))+(c.u?' '+c.u:''),x,ey+(up?-14:34));fit(c.l[j]||'',(x1-x0)/n*1.5,fs-6,0);cx.fillStyle='#b8c2d6';cx.fillText(c.l[j]||'',x,ey+(up?-14-fs:34+fs))});return}
+ // barras horizontales (comparar tamaños)
+ if(k==='hbar'){title();const lw=land?W*.24:W*.3,xa=x0+lw,xb=x1-(land?170:140),mx=Math.max(...V.map(Math.abs),1),rh=Math.min(74,(y1-y0+60)/n),ys=y0-20+((y1-y0+60)-rh*n)/2,hi=V.indexOf(Math.max(...V));
+  V.forEach((v,j)=>{const ej=eo((ts-.15*j)/.9),y=ys+j*rh+rh/2,bl=(xb-xa)*Math.max(0,v)/mx*ej,bh=rh*.56;
+   cx.textAlign='right';fit(c.l[j]||'',lw-18,fs-2,1);cx.fillStyle='#e6ebf5';cx.fillText(c.l[j]||'',xa-14,y+9);
+   const gr=cx.createLinearGradient(xa,0,xa+bl+1,0);gr.addColorStop(0,j===hi?'#c9962a':'#3a62d6');gr.addColorStop(1,j===hi?'#f3d77a':'#7aa4ff');cx.fillStyle=gr;rr(xa,y-bh/2,Math.max(bl,1),bh,Math.min(10,bh/3));cx.fill();
+   cx.textAlign='left';cx.font='bold '+F(fs-2);cx.fillStyle='#fff';cx.fillText(fmtN(v*ej,dec)+u,xa+bl+12,y+9)});return}
+ // anillo (partes de un total)
+ if(k==='donut'){title();const sm=V.reduce((a,b)=>a+Math.max(0,b),0)||1,e=eo(ts/1.5),R=land?Math.min((y1-y0)/2+20,230):Math.min(W*.24,(y1-y0)/2),cyd=land?(y0+y1)/2:y0+R+10,cxd=land?W*.34:W/2;
+  let a=-Math.PI/2;V.forEach((v,j)=>{const sw=Math.max(0,v)/sm*Math.PI*2*e;cx.beginPath();cx.arc(cxd,cyd,R,a,a+sw);cx.arc(cxd,cyd,R*.58,a+sw,a,true);cx.closePath();cx.fillStyle=PAL[j%8];cx.fill();cx.strokeStyle='#0b1628';cx.lineWidth=3;cx.stroke();a+=sw});
+  cx.textAlign='center';cx.fillStyle='#fff';cx.font='bold '+F(fs+16);cx.fillText(fmtN(c.u==='%'?V[0]*e:V[0]/sm*100*e,dec&&c.u==='%')+'%',cxd,cyd+12);
+  const rows=Math.min(n,land?8:5),lh=land?fs+16:36,lx=land?W*.56:W*.16,ly=land?cyd-rows*lh/2+lh*.6:cyd+R+70;
+  for(let j=0;j<rows;j++){const y=ly+j*lh;cx.fillStyle=PAL[j%8];rr(lx,y-fs*.7,fs*.7,fs*.7,5);cx.fill();cx.textAlign='left';fit(c.l[j]||'',land?W*.3:W*.5,fs-4,0);cx.fillStyle='#e6ebf5';cx.fillText(c.l[j]||'',lx+fs,y);
+   cx.textAlign='right';cx.font='bold '+F(fs-4);cx.fillStyle='#fff';cx.fillText(c.u==='%'?fmtN(V[j],dec)+'%':fmtN(V[j]/sm*100)+'%',land?W*.9:W*.84,y)}return}
+ // perfil de alturas y profundidades respecto al nivel del mar (el pico alto se hunde en la fosa)
+ if(k==='depth'){
+  const mp=Math.max(0,...V),mn=Math.max(0,...V.map(x=>-x)),span=(mp+mn)||1,wy=y0+(y1-y0)*mp/span,sc=(y1-y0)/span,side=n<=3&&land,sl=(x1-x0)*(side?.62:1)/n,px=j=>x0+sl*(j+.5),cw=Math.min(150,sl*.5),tw=cw*1.5,mw=cw*1.25,
+   jP=mp>0?V.indexOf(mp):-1,jN=mn>0?V.indexOf(-mn):-1,sink=jP>=0&&jN>=0,g0=Math.min(1.6,(dur||5)*.3),gd=Math.min(1.4,(dur||5)*.28),gt=sink?eo((ts-g0)/gd):0,e=eo(ts/1.2);
+  const sk=cx.createLinearGradient(0,0,0,wy);sk.addColorStop(0,'#0e2040');sk.addColorStop(1,'#34609a');cx.fillStyle=sk;cx.fillRect(0,0,W,wy);
+  const wt=cx.createLinearGradient(0,wy,0,H);wt.addColorStop(0,'#1a7fae');wt.addColorStop(.55,'#0a3558');wt.addColorStop(1,'#020d1c');cx.fillStyle=wt;cx.fillRect(0,wy,W,H-wy);
+  cx.strokeStyle='rgba(255,255,255,.6)';cx.lineWidth=3;cx.beginPath();for(let x=0;x<=W;x+=12){const y=wy+Math.sin(x*.03+ts*2.2)*3;x?cx.lineTo(x,y):cx.moveTo(x,y)}cx.stroke();
+  title();
+  const ns=r=>{const p=Math.pow(10,Math.floor(Math.log10(r))),m=r/p;return(m<1.5?1:m<3.5?2:m<7.5?5:10)*p},st=ns(span/5);
+  cx.font=F(18);cx.textAlign='right';
+  for(let q=-Math.floor(mn/st);q*st<=mp+1e-9;q++){const v=q*st,y=wy-v*sc;if(y<y0-4||y>y1+4)continue;cx.strokeStyle='rgba(255,255,255,.1)';cx.lineWidth=1.5;cx.beginPath();cx.moveTo(x0,y);cx.lineTo(x1,y);cx.stroke();cx.fillStyle=v===0?'#fff':'rgba(255,255,255,.55)';cx.fillText(fmtN(v),x0-10,y+6)}
+  cx.font='bold '+F(20);cx.fillStyle='#fff';cx.fillText(ES?'Nivel del mar':'Sea level',x1,wy-10);
+  const mtn=(x,by,w,h)=>{cx.beginPath();[[-.5,0],[-.3,.36],[-.18,.3],[0,1],[.1,.64],[.2,.72],[.5,0]].forEach((p,i)=>{const X=x+p[0]*w,Y=by-p[1]*h;i?cx.lineTo(X,Y):cx.moveTo(X,Y)});cx.closePath()};
+  const drawMtn=(x,by,w,h)=>{if(h<2)return;const g=cx.createLinearGradient(0,by-h,0,by);g.addColorStop(0,'#cfd6e6');g.addColorStop(.3,'#8d93a8');g.addColorStop(1,'#3c4258');cx.fillStyle=g;mtn(x,by,w,h);cx.fill();
+   cx.save();mtn(x,by,w,h);cx.clip();cx.fillStyle='rgba(255,255,255,.92)';cx.fillRect(x-w,by-h,2*w,h*.24);cx.restore();
+   cx.save();cx.beginPath();cx.rect(0,wy,W,H);cx.clip();cx.fillStyle='rgba(10,90,140,.5)';mtn(x,by,w,h);cx.fill();cx.restore()};
+  const tag=(name,val,x,y,al,bs)=>{cx.textAlign=al;fit(name,side?400:sl-10,bs||fs,1);cx.fillStyle='#fff';cx.fillText(name,x,y-(side?fs+6:0));cx.font='bold '+F((bs||fs)+6);cx.fillStyle='#e8c15a';cx.fillText(val,x,y+(side?4:fs+8))};
+  // fosas / profundidades
+  V.forEach((v,j)=>{if(v>=0)return;const ej=eo((ts-.1*j)/1.1),h=-v*sc*ej,x=px(j),g=cx.createLinearGradient(0,wy,0,wy+h+1);g.addColorStop(0,'rgba(120,215,255,.30)');g.addColorStop(1,'rgba(2,10,28,.92)');
+   cx.fillStyle=g;rr(x-tw/2,wy,tw,h,12);cx.fill();cx.strokeStyle='rgba(160,225,255,.5)';cx.lineWidth=2;cx.stroke();
+   const val='-'+fmtN(-v*ej,dec)+u;if(side)tag(c.l[j]||'',val,x+tw/2+18,wy+h-10,'left');else{cx.textAlign='center';cx.font='bold '+F(fs-4);cx.fillStyle='#e8c15a';cx.fillText(val,x,wy+h+30);fit(c.l[j]||'',sl-10,fs-6,0);cx.fillStyle='#fff';cx.fillText(c.l[j]||'',x,wy+h+30+fs)}});
+  // montañas / alturas
+  V.forEach((v,j)=>{if(v<=0)return;const ej=eo((ts-.1*j)/1.1),h=v*sc*ej,x=px(j);
+   if(sink&&j===jP){cx.save();cx.setLineDash([10,8]);cx.strokeStyle='rgba(255,255,255,.45)';cx.lineWidth=2;mtn(x,wy,mw,h);cx.stroke();cx.restore();
+    drawMtn(x+(px(jN)-x)*gt,wy+mn*sc*gt,mw,h)}else drawMtn(x,wy,mw,h);
+   const val='+'+fmtN(v*ej,dec)+u;if(side)tag(c.l[j]||'',val,x+mw/2+16,Math.max(y0,wy-h*.5),'left');else{cx.textAlign='center';cx.font='bold '+F(fs-4);cx.fillStyle='#e8c15a';cx.fillText(val,x,wy-h-14);fit(c.l[j]||'',sl-10,fs-6,0);cx.fillStyle='#fff';cx.fillText(c.l[j]||'',x,sink&&j===jP?wy-h-14-fs-4:wy+28)}});
+  // medida de lo que queda entre la superficie y la cima
+  if(sink){const br=eo((ts-g0-gd)/.6);if(br>0){const rem=mn-mp,xc=px(jN),ya=wy,yb=wy+rem*sc;cx.save();cx.globalAlpha=br;cx.strokeStyle='#e8c15a';cx.lineWidth=3;
+   cx.beginPath();cx.moveTo(xc,ya);cx.lineTo(xc,yb);cx.moveTo(xc-14,ya);cx.lineTo(xc+14,ya);cx.moveTo(xc-14,yb);cx.lineTo(xc+14,yb);cx.stroke();
+   const my=Math.max(ya+36,(ya+yb)/2),xt=xc-tw/2-18,cap=rem>=0?(ES?'de agua sobre la cima':'of water above the peak'):(ES?'sobresale del agua':'sticks out of the water');cx.textAlign='right';fit(fmtN(Math.abs(rem),dec)+u,xt-x0,fs+8,1);cx.fillStyle='#e8c15a';cx.fillText(fmtN(Math.abs(rem),dec)+u,xt,my);fit(cap,xt-x0,fs-6,0);cx.fillStyle='#e6ebf5';cx.fillText(cap,xt,my+fs);cx.restore()}}
+  return}
+ // barras y líneas
+ title();const mx=Math.max(...V,1)*1.12;grid(mx);const sl=(x1-x0)/n,px=j=>x0+sl*(j+.5);
+ if(k==='bar'){const bw=Math.min(sl*.6,180),hi=V.indexOf(Math.max(...V));
+  V.forEach((v,j)=>{const ej=eo((ts-.12*j)/.9),h=(y1-y0)*Math.max(0,v)/mx*ej,gr=cx.createLinearGradient(0,y1-h,0,y1),col=j===hi?['#f3d77a','#c9962a']:['#7aa4ff','#3a62d6'];gr.addColorStop(0,col[0]);gr.addColorStop(1,col[1]);
+   cx.fillStyle=gr;rr(px(j)-bw/2,y1-h,bw,Math.max(h,0),Math.min(10,bw/4));cx.fill();cx.textAlign='center';cx.fillStyle='#fff';cx.font='bold '+F(fs-2);cx.fillText(fmtN(v*ej,dec)+u,px(j),y1-h-14);
+   fit(c.l[j]||'',sl-8,fs-4,0);cx.fillStyle='#b8c2d6';cx.fillText(c.l[j]||'',px(j),y1+42)})}
+ else{const lx=j=>x0+20+(x1-x0-40)*j/(n-1),ly=j=>y1-(y1-y0)*Math.max(0,V[j])/mx,fr=eo(ts/1.7)*(n-1),fl=Math.floor(fr),P=[];
+  for(let j=0;j<=fl&&j<n;j++)P.push([lx(j),ly(j)]);if(fl<n-1){const f=fr-fl;P.push([lx(fl)+(lx(fl+1)-lx(fl))*f,ly(fl)+(ly(fl+1)-ly(fl))*f])}
+  const ar=cx.createLinearGradient(0,y0,0,y1);ar.addColorStop(0,'rgba(232,193,90,.32)');ar.addColorStop(1,'rgba(232,193,90,0)');cx.fillStyle=ar;cx.beginPath();cx.moveTo(P[0][0],y1);P.forEach(p=>cx.lineTo(p[0],p[1]));cx.lineTo(P[P.length-1][0],y1);cx.closePath();cx.fill();
+  cx.strokeStyle='#e8c15a';cx.lineWidth=6;cx.lineJoin='round';cx.beginPath();P.forEach((p,j)=>j?cx.lineTo(p[0],p[1]):cx.moveTo(p[0],p[1]));cx.stroke();
+  const hi=V.indexOf(Math.max(...V));V.forEach((v,j)=>{if(j>fr)return;cx.fillStyle='#e8c15a';cx.beginPath();cx.arc(lx(j),ly(j),9,0,7);cx.fill();
+   if(n<=6||j===0||j===n-1||j===hi){cx.textAlign='center';cx.font='bold '+F(fs-4);cx.fillStyle='#fff';cx.fillText(fmtN(v,dec)+u,lx(j),ly(j)-18)}
+   if(n<=8||j%2===0){fit(c.l[j]||'',(x1-x0)/n-6,fs-6,0);cx.textAlign='center';cx.fillStyle='#b8c2d6';cx.fillText(c.l[j]||'',lx(j),y1+42)}})}
 }
 // Saliencia local (sin API): perfiles de bordes+color por columna y fila para centrar el recorte
 function sal(src,sw,sh){
@@ -870,7 +959,7 @@ function bestWin(p,f){
  return(bi+k/2)/n;
 }
 const bgc=document.createElement('canvas');
-function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
+function drawM(s,t,i){if(s.c)return drawChart(s.c,t,s.dur);
  if(s.v&&(!s.v.videoWidth||s.v.readyState<2)&&s.fb)s=Object.assign({},s,{v:null,img:s.fb,sal:null});
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const land=W>H,md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=land?0:md===2?(.5-t)*50:md===3?(t-.5)*50:0; // horizontal: recorte centrado simple, sin recorte inteligente ni desplazamiento lateral
@@ -940,7 +1029,7 @@ function render(T){ui(T);cx.setTransform(K,0,0,K,0,0);
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,'+PF().vg+')');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
  drawIntro(T);drawEnd(T);
- if(cur){if(!(INTRO()&&cur===scenes[0]&&cur.o&&cur.o.k==='title'))drawOv(cur,T);drawMap(cur,T)}
+ if(cur){if(!cur.c){if(!(INTRO()&&cur===scenes[0]&&cur.o&&cur.o.k==='title'))drawOv(cur,T);drawMap(cur,T)}}
  if($('sub').checked&&cur){const m=styV()==='shorts'?16:isV()?24:44,key=m+'|'+WPS()+'|'+(cur.a?cur.a.duration:0)+'|'+cur.n.length;if(cur._sck!==key){cur._sc=subChunks(cur,m);cur._sck=key}
   const lt=T-cur.st;let g=cur._sc[0];for(const x of cur._sc)if(x.a<=lt)g=x;
   if(g){const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(g.t,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
@@ -962,7 +1051,7 @@ async function prime(){
  const s0=scenes[0];if(s0&&s0.v&&s0.v.videoWidth){try{await seekTo(s0.v,s0.vs||0)}catch(_){}}
 }
 // Iguala el volumen de cada frase de voz (cada escena se sintetiza por separado y puede sonar más baja o más alta)
-const AMB_REL=.08,MUS_REL=.12; // volumen del ambiente y de la música respecto a la voz (.08 = 8 %)
+const AMB_REL=.045,MUS_REL=.07,AV=()=>(+$('avol').value||0)/50,MV=()=>(+$('mvol').value||0)/50; // música y ambiente mucho más bajos que la voz; los deslizadores multiplican (50 = valor por defecto) // volumen del ambiente y de la música respecto a la voz (.08 = 8 %)
 function again(b){if(b._ag)return b._ag;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=4){const x=d[i];if(Math.abs(x)>.02){q+=x*x;n++}}const r=n>200?Math.sqrt(q/n):.2;return b._ag=Math.min(.6,AMB_REL*.14/Math.max(r,.01))}
 function mgain(b){if(b._mg)return b._mg;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=8){q+=d[i]*d[i];n++}const r=Math.sqrt(q/Math.max(1,n));return b._mg=Math.min(.5,MUS_REL*.14/Math.max(r,.01))}
 function vgain(b){if(b._g)return b._g;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=4){const x=d[i];if(Math.abs(x)>.02){q+=x*x;n++}}const r=n>200?Math.sqrt(q/n):0;return b._g=r>.01?Math.max(.6,Math.min(2.2,.14/r)):1}
@@ -975,17 +1064,20 @@ async function run(rec,from=0){
  const vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
  const mc=ctx.createDynamicsCompressor();mc.threshold.value=-20;mc.knee.value=20;mc.ratio.value=3;mc.attack.value=.01;mc.release.value=.3;const lm=ctx.createDynamicsCompressor();lm.threshold.value=-2;lm.knee.value=0;lm.ratio.value=20;lm.attack.value=.002;lm.release.value=.1;vg.connect(mc);mc.connect(lm);lm.connect(dest);if(!rec&&!ok)lm.connect(ctx.destination);
  const vh=ctx.createBiquadFilter(),vk=ctx.createBiquadFilter();vh.type='highpass';vh.frequency.value=75;vk.type='peaking';vk.frequency.value=3200;vk.Q.value=.9;vk.gain.value=2.5;vh.connect(vk);vk.connect(vg);
+ const dkM=ctx.createGain(),dkA=ctx.createGain(),mq=ctx.createBiquadFilter(),aq=ctx.createBiquadFilter(),DK=.4; // ducking: música y ambiente bajan mientras habla la voz; EQ que les quita la zona de la voz
+ mq.type=aq.type='peaking';mq.frequency.value=aq.frequency.value=2600;mq.Q.value=aq.Q.value=.7;mq.gain.value=-6;aq.gain.value=-4;mq.connect(dkM);dkM.connect(vg);aq.connect(dkA);dkA.connect(vg);dkM.gain.setValueAtTime(1,t0);dkA.gain.setValueAtTime(1,t0);
+ scenes.forEach(s=>{if(!s.a)return;const sp=spanOf(s.a),a=t0+s.st+sp[0]-from,b=t0+s.st+sp[1]-from;if(b<t0)return;[dkM,dkA].forEach(g=>{g.gain.setTargetAtTime(DK,Math.max(t0,a-.2),.12);g.gain.setTargetAtTime(1,Math.max(t0,b+.05),.45)})});
  scenes.forEach(s=>{if(s.v)s.v.currentTime=s.vs||0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;const gn=ctx.createGain();gn.gain.value=vgain(s.a);n.connect(gn);gn.connect(vh);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
  if($('amb').checked){const nb=ctx.createBuffer(1,ctx.sampleRate*1.3|0,ctx.sampleRate),nd=nb.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
   scenes.forEach((s,i)=>{if(i&&s.tr==='cut')return;const t=s.st-(i&&s.tr!=='flash'?X:0)-from;if(t<0)return;const at=t0+t;
-   if(s.o){const ts=t0+s.st+ovT(s)-from;if(ts>t0-.1){const o=ctx.createOscillator(),og=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(880,ts);o.frequency.exponentialRampToValueAtTime(520,ts+.14);og.gain.setValueAtTime(.0001,ts);og.gain.linearRampToValueAtTime(.07,ts+.01);og.gain.exponentialRampToValueAtTime(.0001,ts+.2);o.connect(og);og.connect(vg);o.start(ts);o.stop(ts+.25);srcs.push(o)}}
-   if(i&&(s.tr==='flash'||s.tr==='dip')){const ra=at-1.1;if(ra>t0-.05){const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=1.2;fl.frequency.setValueAtTime(400,ra);fl.frequency.exponentialRampToValueAtTime(4500,at);g.gain.setValueAtTime(.0001,ra);g.gain.linearRampToValueAtTime(.09,at-.05);g.gain.linearRampToValueAtTime(.0001,at+.05);n.connect(fl);fl.connect(g);g.connect(vg);n.start(ra);n.stop(at+.1);srcs.push(n)}}
-   if(s.tr==='flash'){const o=ctx.createOscillator(),og=ctx.createGain();o.frequency.setValueAtTime(120,at);o.frequency.exponentialRampToValueAtTime(40,at+.35);og.gain.setValueAtTime(.25,at);og.gain.exponentialRampToValueAtTime(.0001,at+.5);o.connect(og);og.connect(vg);o.start(at);o.stop(at+.6);srcs.push(o);return}
+   if(s.o){const ts=t0+s.st+ovT(s)-from;if(ts>t0-.1){const o=ctx.createOscillator(),og=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(880,ts);o.frequency.exponentialRampToValueAtTime(520,ts+.14);og.gain.setValueAtTime(.0001,ts);og.gain.linearRampToValueAtTime(.04,ts+.01);og.gain.exponentialRampToValueAtTime(.0001,ts+.2);o.connect(og);og.connect(vg);o.start(ts);o.stop(ts+.25);srcs.push(o)}}
+   if(i&&(s.tr==='flash'||s.tr==='dip')){const ra=at-1.1;if(ra>t0-.05){const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=1.2;fl.frequency.setValueAtTime(400,ra);fl.frequency.exponentialRampToValueAtTime(4500,at);g.gain.setValueAtTime(.0001,ra);g.gain.linearRampToValueAtTime(.045,at-.05);g.gain.linearRampToValueAtTime(.0001,at+.05);n.connect(fl);fl.connect(g);g.connect(vg);n.start(ra);n.stop(at+.1);srcs.push(n)}}
+   if(s.tr==='flash'){const o=ctx.createOscillator(),og=ctx.createGain();o.frequency.setValueAtTime(120,at);o.frequency.exponentialRampToValueAtTime(40,at+.35);og.gain.setValueAtTime(.14,at);og.gain.exponentialRampToValueAtTime(.0001,at+.5);o.connect(og);og.connect(vg);o.start(at);o.stop(at+.6);srcs.push(o);return}
    const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=.8;fl.frequency.setValueAtTime(250,at);fl.frequency.exponentialRampToValueAtTime(3000,at+.9);
-   g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.12:.18,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
- if($('amb').checked)scenes.forEach((s,i)=>{if(!s.ab||s.st+s.dur<=from)return;const at=t0+Math.max(0,s.st-(i?X:0)-from),en=t0+s.st+s.dur-from+.3,n=ctx.createBufferSource(),g=ctx.createGain();n.buffer=s.ab;n.loop=true;g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(again(s.ab)*PF().am,at+.8);g.gain.setValueAtTime(again(s.ab)*PF().am,Math.max(at+.8,en-.8));g.gain.linearRampToValueAtTime(.0001,en);n.connect(g);g.connect(vg);n.start(at,Math.random()*Math.max(0,s.ab.duration-1));n.stop(en+.1);srcs.push(n)});
- if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;const B=(mAuto&&!mReal)?.17*(scenes.some(s=>s.a)?.8:1.6):mgain(music)*(scenes.some(s=>s.a)?1:2),g=mg.gain;g.setValueAtTime(.0001,t0);g.linearRampToValueAtTime(B,t0+(from?.4:2.5));if(!from&&INTRO()>0){g.linearRampToValueAtTime(B*1.6,t0+INTRO()-.2);g.setTargetAtTime(B,t0+INTRO(),.7)}
-  scenes.forEach(s=>{if(s.p>=.4&&s.a){const at=t0+s.st+s.a.duration-from;if(at>t0){g.setTargetAtTime(B*1.7,at,.25);g.setTargetAtTime(B,at+s.p,.4)}}});g.setTargetAtTime(.0001,t0+total-from-2.8,.9);n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
+   g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.05:.08,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
+ if($('amb').checked)scenes.forEach((s,i)=>{if(!s.ab||s.st+s.dur<=from)return;const at=t0+Math.max(0,s.st-(i?X:0)-from),en=t0+s.st+s.dur-from+.3,n=ctx.createBufferSource(),g=ctx.createGain();n.buffer=s.ab;n.loop=true;g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(again(s.ab)*PF().am*AV(),at+.8);g.gain.setValueAtTime(again(s.ab)*PF().am*AV(),Math.max(at+.8,en-.8));g.gain.linearRampToValueAtTime(.0001,en);n.connect(g);g.connect(aq);n.start(at,Math.random()*Math.max(0,s.ab.duration-1));n.stop(en+.1);srcs.push(n)});
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;const B=((mAuto&&!mReal)?.1*(scenes.some(s=>s.a)?.8:1.6):mgain(music)*(scenes.some(s=>s.a)?1:2))*MV(),g=mg.gain;g.setValueAtTime(.0001,t0);g.linearRampToValueAtTime(B,t0+(from?.4:2.5));if(!from&&INTRO()>0){g.linearRampToValueAtTime(B*1.6,t0+INTRO()-.2);g.setTargetAtTime(B,t0+INTRO(),.7)}
+  scenes.forEach(s=>{if(s.p>=.4&&s.a){const at=t0+s.st+s.a.duration-from;if(at>t0){g.setTargetAtTime(B*1.5,at,.25);g.setTargetAtTime(B,at+s.p,.4)}}});g.setTargetAtTime(.0001,t0+total-from-2.8,.9);n.connect(mg);mg.connect(mq);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
  if(rec){const mt=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:K>1?9e6:5e6});
@@ -1018,6 +1110,7 @@ $('diag').onclick=async()=>{
  alert(r.join('\n'));
 };
 
+['mvol','avol'].forEach(id=>{try{const v=localStorage.getItem('vidia_'+id);if(v!==null)$(id).value=v}catch(_){}$(id).oninput=()=>{try{localStorage.setItem('vidia_'+id,$(id).value)}catch(_){}}});
 const DGV=['agustina','alvaro','antonia','aquila','carina','celeste','diana','estrella','gloria','javier','luciano','nestor','olivia','selena','silvia','sirio','valerio'];
 $('dgv').innerHTML='<option value="">Automática (según «Voz» de arriba)</option>'+DGV.map(n=>'<option value="aura-2-'+n+'-es">'+n[0].toUpperCase()+n.slice(1)+'</option>').join('');
 try{$('dgv').value=localStorage.getItem('vidia_dgv')||''}catch(_){}
