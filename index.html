@@ -78,7 +78,14 @@ small{color:var(--mut)}
 
 <script>
 const $=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const fj=async(u,o={})=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),90000);try{const r=await fetch(u,{...o,signal:c.signal});if(!r.ok)throw new Error(r.status+' '+(await r.text()).replace(/\s+/g,' ').slice(0,200));return r}finally{clearTimeout(t)}};
+const fj=async(u,o={},n=0)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),90000);try{const r=await fetch(u,{...o,signal:c.signal});if(!r.ok)throw new Error(r.status+' '+(await r.text()).replace(/\s+/g,' ').slice(0,200));return r}
+ catch(e){if(n<2&&!/^\d{3} /.test(e.message)&&(e.name==='AbortError'||e instanceof TypeError||/Load failed|Failed to fetch/.test(e.message))){await sleep(1500);return fj(u,o,n+1)}throw e}finally{clearTimeout(t)}};
+// Mantener viva la página al salir de la app: audio silencioso en bucle + pantalla encendida (iOS suspende las páginas en segundo plano)
+let kaA=null,wl=null,busy=false;
+function silentWav(){const n=8000,b=new Uint8Array(44+n),d=new DataView(b.buffer),w=(o,s)=>[...s].forEach((c,i)=>b[o+i]=c.charCodeAt(0));w(0,'RIFF');d.setUint32(4,36+n,true);w(8,'WAVEfmt ');d.setUint32(16,16,true);d.setUint16(20,1,true);d.setUint16(22,1,true);d.setUint32(24,8000,true);d.setUint32(28,8000,true);d.setUint16(32,1,true);d.setUint16(34,8,true);w(36,'data');d.setUint32(40,n,true);b.fill(128,44);return URL.createObjectURL(new Blob([b],{type:'audio/wav'}))}
+async function keepOn(){busy=true;try{if(!kaA){kaA=new Audio(silentWav());kaA.loop=true}await kaA.play()}catch(_){}try{wl=await navigator.wakeLock.request('screen')}catch(_){}}
+function keepOff(){busy=false;try{kaA&&kaA.pause()}catch(_){}try{wl&&wl.release()}catch(_){}wl=null}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&busy){try{kaA&&kaA.paused&&kaA.play().catch(()=>{})}catch(_){}try{navigator.wakeLock.request('screen').then(x=>wl=x).catch(()=>{})}catch(_){}}});
 const LLMS=[
  {id:'openai',name:'ChatGPT',type:'openai',url:'https://api.openai.com/v1/responses',model:'gpt-6-luna'},
  {id:'gemini',name:'Gemini',type:'gemini',model:'gemini-2.0-flash'},
@@ -93,6 +100,11 @@ const KEYIDS=['openai','pexels','pixabay','gemini','elevenlabs','groq','cerebras
 let keys={};try{keys=JSON.parse(localStorage.getItem('vidia_keys')||'{}')}catch(e){}
 $('keys').innerHTML=KEYIDS.map(k=>`<label>${k}</label><input data-k="${k}" type="password" value="${keys[k]||''}" autocomplete="off">`).join('');
 $('keys').oninput=e=>{keys[e.target.dataset.k]=e.target.value.trim();try{localStorage.setItem('vidia_keys',JSON.stringify(keys))}catch(_){}};
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(_){} // pide al navegador no borrar los datos
+{const kb=document.createElement('div');kb.className='row';kb.innerHTML='<button class="s" id="kcp">📋 Copiar claves</button><button class="s" id="kps">📥 Pegar claves</button>';$('keys').insertAdjacentElement('afterend',kb);
+ // La app de la pantalla de inicio de iOS tiene su propio almacenamiento, separado de Safari: con estos botones pasas las claves de uno a otro
+ $('kcp').onclick=async()=>{const c='VIDIA:'+btoa(JSON.stringify(keys));try{await navigator.clipboard.writeText(c);alert('Claves copiadas. Abre la otra versión de la app y pulsa "Pegar claves".')}catch(_){prompt('Copia este código:',c)}};
+ $('kps').onclick=()=>{const t=prompt('Pega aquí el código de claves');if(!t)return;try{Object.assign(keys,JSON.parse(atob(t.trim().replace(/^VIDIA:/,''))));localStorage.setItem('vidia_keys',JSON.stringify(keys));document.querySelectorAll('#keys input').forEach(i=>i.value=keys[i.dataset.k]||'');alert('Claves cargadas')}catch(e){alert('Código no válido')}}}
 const log=t=>{const l=$('log');l.textContent+=t+'\n';l.scrollTop=l.scrollHeight};
 const prog=p=>$('bar').firstElementChild.style.width=(p*100)+'%';
 const deadT=new Set(),deadI=new Set(),deadS=new Set(),deadA=new Set(),fatal=m=>/^(401|402|403|429)/.test(m),em=e=>String((e&&e.message)||e).replace(/\s+/g,' ').slice(0,110);
@@ -492,7 +504,7 @@ $('mus').onchange=async e=>{try{mAuto=false;music=e.target.files[0]?await ctx.de
 let scenes=[],title='',cancel=false;
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
- title=topic.slice(0,60);cancel=false;ctx.resume();
+ title=topic.slice(0,60);cancel=false;ctx.resume();keepOn();
  $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);prog(0);
  const total=Math.round(+$('min').value*12),L=$('lang').value==='es-ES'?'español':'English';
  try{
@@ -519,7 +531,7 @@ $('go').onclick=async()=>{
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
- $('go').disabled=false;
+ keepOff();$('go').disabled=false;
 };
 
 // ---------- Edición / render ----------
@@ -633,7 +645,7 @@ $('play').onclick=()=>{if(rc)return;if(!playing)return run(false,pos>=DUR()-1?0:
 $('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textContent=tf(t)+' / '+tf(DUR());if(!playing)render(t)};
 $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
 $('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Video exportado.'))};
-$('stop').onclick=()=>{stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
+$('stop').onclick=()=>{keepOff();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 </script>
 </body>
 </html>
