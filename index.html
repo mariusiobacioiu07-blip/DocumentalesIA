@@ -34,7 +34,7 @@ small{color:var(--mut)}
 <div class="card">
 <details>
 <summary>Claves API (opcionales; se guardan solo en tu navegador)</summary>
-<small>Sin claves funcionan Pollinations (texto, voz, imagen), Wikipedia, Wikimedia y Openverse. Con claves mejora mucho: Pexels (fotos y videos gratis), Pixabay, Gemini (texto y voz), ElevenLabs (voz). Si un proveedor se agota, pasa al siguiente.</small>
+<small>Sin claves funcionan: Pollinations (texto, voz, imagen), Wikipedia, Wikimedia Commons (fotos y vídeo), NASA (fotos y vídeo), Internet Archive (fotos y vídeo), iNaturalist (naturaleza), Met, Art Institute of Chicago, Cleveland Museum, Wellcome, Library of Congress, Smithsonian y Openverse (fotos y sonidos). Con claves gratis mejora: Pixabay, Unsplash, Coverr (vídeo), Flickr, Gemini (texto y voz), ElevenLabs (voz). Pexels ahora mismo no entrega claves nuevas; si ya tienes una, funciona. Smithsonian va con una clave de prueba; si te quedas sin cuota, saca la tuya gratis en api.data.gov/signup. Si un proveedor se agota, pasa al siguiente.</small>
 <div id="keys"></div>
 </details>
 </div>
@@ -61,6 +61,10 @@ small{color:var(--mut)}
 <label class="chk"><input id="pv" type="checkbox" checked> Preferir clips de vídeo cuando los haya</label>
 <label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
 <label class="chk"><input id="chk" type="checkbox" checked> La IA (Gemini, Groq, Mistral) elige la mejor imagen/vídeo</label>
+<label class="chk"><input id="dir" type="checkbox" checked> 🎬 Director IA: revisa el montaje y cambia las escenas que no encajan</label>
+<label class="chk"><input id="map" type="checkbox" checked> 🗺 Mini-mapa del mundo en las escenas de lugares</label>
+<label>Estilo del guion</label><select id="sty"><option value="clasico">Documental clásico (sereno)</option><option value="curiosidades">Curiosidades (dinámico)</option><option value="misterio">Misterio / true crime</option><option value="educativo">Educativo (claro)</option><option value="shorts">Shorts viral (rápido)</option></select>
+<label class="chk"><input id="rvw" type="checkbox"> Revisar y editar el guion antes de buscar imágenes</label>
 <button id="go">Generar</button>
 <div id="bar"><i></i></div>
 <div id="log"></div>
@@ -96,7 +100,7 @@ const LLMS=[
  {id:'pollinations',name:'Pollinations texto',nokey:1,url:'https://text.pollinations.ai/openai',model:'openai'}
 ];
 const IMGS=[{id:'gemini'},{id:'openai'},{id:'together'},{id:'huggingface'},{id:'pollinations',nokey:1}];
-const KEYIDS=['openai','pexels','pixabay','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
+const KEYIDS=['openai','pexels','pixabay','unsplash','coverr','flickr','smithsonian','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
 let keys={};try{keys=JSON.parse(localStorage.getItem('vidia_keys')||'{}')}catch(e){}
 $('keys').innerHTML=KEYIDS.map(k=>`<label>${k}</label><input data-k="${k}" type="password" value="${keys[k]||''}" autocomplete="off">`).join('');
 $('keys').oninput=e=>{keys[e.target.dataset.k]=e.target.value.trim();try{localStorage.setItem('vidia_keys',JSON.stringify(keys))}catch(_){}};
@@ -246,6 +250,58 @@ const STOCK=[
   const a=(await Promise.all(it.map(async x=>{try{const f=await(await fj(x.href.replace(/^http:/,'https:'))).json(),u=f.find(u=>/~small\.mp4$/.test(u))||f.find(u=>/~medium\.mp4$/.test(u))||f.find(u=>/~mobile\.mp4$/.test(u)),th=(x.links||[]).find(l=>l.render==='image');
    return u&&{t:'vid',url:u.replace(/^http:/,'https:'),prev:th&&th.href,credit:'NASA – '+(x.data[0].title||'').slice(0,50)}}catch(_){return null}}))).filter(Boolean);
   return a.length?pick(a):null}},
+ {id:'archive-video',f:async q=>{
+  const j=await(await fj('https://archive.org/advancedsearch.php?output=json&rows=8&fl[]=identifier&fl[]=title&q='+enc('('+q+') AND mediatype:movies AND (collection:prelinger OR collection:nasa OR collection:stock_footage)'))).json();
+  const a=(await Promise.all(((j.response||{}).docs||[]).slice(0,4).map(async d=>{try{const m=await(await fj('https://archive.org/metadata/'+d.identifier)).json(),f=(m.files||[]).filter(x=>/\.mp4$/i.test(x.name)&&+x.size>3e5&&+x.size<=10e6).sort((x,y)=>y.size-x.size)[0];
+   return f&&{t:'vid',url:'https://archive.org/download/'+d.identifier+'/'+enc(f.name),prev:'https://archive.org/services/img/'+d.identifier,credit:'Internet Archive – '+String(d.title||d.identifier).slice(0,50)+' (dominio público)'}}catch(_){return null}}))).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'met',f:async q=>{
+  const j=await(await fj('https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&isPublicDomain=true&q='+enc(q))).json();
+  const a=(await Promise.all((j.objectIDs||[]).slice(0,4).map(async id=>{try{const o=await(await fj('https://collectionapi.metmuseum.org/public/collection/v1/objects/'+id)).json();return o.isPublicDomain&&o.primaryImage&&{t:'img',url:o.primaryImage,prev:o.primaryImageSmall||o.primaryImage,credit:'The Met – '+String(o.title||'').slice(0,50)+' (dominio público)'}}catch(_){return null}}))).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'artic',f:async q=>{
+  const j=await(await fj('https://api.artic.edu/api/v1/artworks/search?limit=8&fields=id,title,image_id&query[term][is_public_domain]=true&q='+enc(q))).json();
+  const a=(j.data||[]).filter(d=>d.image_id).map(d=>({t:'img',url:'https://www.artic.edu/iiif/2/'+d.image_id+'/full/1200,/0/default.jpg',prev:'https://www.artic.edu/iiif/2/'+d.image_id+'/full/400,/0/default.jpg',credit:'Art Institute of Chicago – '+String(d.title||'').slice(0,50)+' (dominio público)'}));
+  return a.length?pick(a):null}},
+ {id:'nasa-foto',f:async q=>{
+  const ws=q.toLowerCase().split(/\s+/).filter(w=>w.length>3),j=await(await fj('https://images-api.nasa.gov/search?media_type=image&q='+enc(q))).json();
+  const a=((j.collection||{}).items||[]).filter(x=>{const d=x.data[0],t=(d.title+' '+(d.description||'')).toLowerCase();return ws.some(w=>t.includes(w))}).map(x=>{const th=(x.links||[]).find(l=>l.render==='image'),u=th&&th.href&&th.href.replace(/^http:/,'https:');return u&&{t:'img',url:u.replace(/~thumb\.jpg$/,'~medium.jpg'),prev:u,credit:'NASA – '+String(x.data[0].title||'').slice(0,50)}}).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'inaturalist',f:async q=>{
+  const j=await(await fj('https://api.inaturalist.org/v1/observations?per_page=10&quality_grade=research&photos=true&photo_license=cc0,cc-by,cc-by-sa&order_by=votes&q='+enc(q))).json();
+  const a=(j.results||[]).flatMap(o=>(o.photos||[]).slice(0,1).filter(p=>p.url&&p.license_code).map(p=>({t:'img',url:p.url.replace('square','large'),prev:p.url.replace('square','medium'),credit:'iNaturalist – '+((o.user&&o.user.login)||'?')+' ('+p.license_code.toUpperCase()+')'})));
+  return a.length?pick(a):null}},
+ {id:'cleveland',f:async q=>{
+  const j=await(await fj('https://openaccess-api.clevelandart.org/api/artworks/?limit=8&has_image=1&cc0=1&q='+enc(q))).json();
+  const a=(j.data||[]).filter(d=>d.images&&d.images.web&&d.images.web.url).map(d=>({t:'img',url:d.images.web.url,credit:'Cleveland Museum of Art – '+String(d.title||'').slice(0,50)+' (CC0)'}));
+  return a.length?pick(a):null}},
+ {id:'wellcome',f:async q=>{
+  const j=await(await fj('https://api.wellcomecollection.org/catalogue/v2/images?pageSize=8&locations.license=pdm,cc0,cc-by&query='+enc(q))).json();
+  const a=(j.results||[]).map(r=>{const l=(r.locations||[]).find(x=>x.url&&x.license&&/^(pdm|cc0|cc-by)$/.test(x.license.id));if(!l)return null;const b=l.url.replace(/\/info\.json$/,'');return{t:'img',url:b+'/full/1200,/0/default.jpg',prev:b+'/full/400,/0/default.jpg',credit:'Wellcome Collection – '+String((r.source&&r.source.title)||'').slice(0,50)+' ('+l.license.id.toUpperCase()+')'}}).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'loc',f:async q=>{
+  const j=await(await fj('https://www.loc.gov/photos/?fo=json&c=10&fa=access-restricted:false&q='+enc(q))).json();
+  const a=(j.results||[]).filter(r=>Array.isArray(r.image_url)&&r.image_url.length).map(r=>{const u=r.image_url.map(x=>x.replace(/^http:/,'https:')),big=u.find(x=>/\/(full|iiif)\//.test(x))||u[u.length-1];return{t:'img',url:big,prev:u[0],credit:'Library of Congress – '+String(r.title||'').slice(0,50)+' (sin restricciones conocidas)'}});
+  return a.length?pick(a):null}},
+ {id:'archive-foto',f:async q=>{
+  const j=await(await fj('https://archive.org/advancedsearch.php?output=json&rows=8&fl[]=identifier&fl[]=title&q='+enc('('+q+') AND mediatype:image AND (collection:flickrcommons OR collection:nasa)'))).json();
+  const a=(await Promise.all(((j.response||{}).docs||[]).slice(0,4).map(async d=>{try{const m=await(await fj('https://archive.org/metadata/'+d.identifier)).json(),f=(m.files||[]).filter(x=>/jpe?g/i.test(x.format||'')&&+x.size>5e4&&+x.size<=6e6).sort((x,y)=>y.size-x.size)[0];
+   return f&&{t:'img',url:'https://archive.org/download/'+d.identifier+'/'+enc(f.name),prev:'https://archive.org/services/img/'+d.identifier,credit:'Internet Archive – '+String(d.title||d.identifier).slice(0,50)+' (sin restricciones conocidas)'}}catch(_){return null}}))).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'smithsonian',f:async q=>{
+  const j=await(await fj('https://api.si.edu/openaccess/api/v1.0/search?rows=8&api_key='+(keys.smithsonian||'DEMO_KEY')+'&q='+enc(q+' AND online_media_type:Images AND unit_code:(NMNH OR NASM OR SAAM OR NPG OR FSG OR CHNDM)'))).json();
+  const a=((j.response||{}).rows||[]).map(r=>{const d=(r.content||{}).descriptiveNonRepeating||{},m=((d.online_media||{}).media||[]).find(x=>x.type==='Images'&&x.content&&(!x.usage||x.usage.access==='CC0'));return m&&{t:'img',url:m.content,prev:m.thumbnail,credit:'Smithsonian – '+String(d.title&&d.title.content||'').slice(0,50)+' (CC0)'}}).filter(Boolean);
+  return a.length?pick(a):null}},
+ {id:'unsplash',key:'unsplash',f:async q=>{
+  const j=await(await fj('https://api.unsplash.com/search/photos?per_page=8&orientation='+(isV()?'portrait':'landscape')+'&client_id='+keys.unsplash+'&query='+enc(q))).json();
+  return(j.results||[]).length?pick(j.results.map(r=>({t:'img',url:r.urls.regular,prev:r.urls.small,credit:'Unsplash – '+r.user.name}))):null}},
+ {id:'flickr',key:'flickr',f:async q=>{
+  const j=await(await fj('https://www.flickr.com/services/rest/?method=flickr.photos.search&format=json&nojsoncallback=1&media=photos&content_type=1&sort=relevance&per_page=10&license=4,5,7,8,9,10&extras=url_l,owner_name&api_key='+keys.flickr+'&text='+enc(q))).json();
+  const a=((j.photos||{}).photo||[]).filter(p=>p.url_l).map(p=>({t:'img',url:p.url_l,prev:p.url_l.replace(/_b\.jpg$/,'_n.jpg'),credit:'Flickr – '+p.ownername+' (CC)'}));return a.length?pick(a):null}},
+ {id:'coverr-video',key:'coverr',f:async q=>{
+  const j=await(await fj('https://api.coverr.co/videos?urls=true&page_size=8&api_key='+keys.coverr+'&query='+enc(q))).json();
+  const a=(j.hits||[]).filter(h=>h.urls&&(h.urls.mp4_preview||h.urls.mp4)&&!!h.is_vertical===isV()).map(h=>({t:'vid',url:h.urls.mp4_preview||h.urls.mp4,prev:h.thumbnail,credit:'Coverr – '+String(h.title||'').slice(0,50)}));
+  return a.length?pick(a):null}},
  {id:'openverse',f:async q=>{
   const j=await(await fj('https://api.openverse.org/v1/images/?page_size=10&license_type=commercial,modification&category=photograph&q='+enc(q))).json();
   const a=(j.results||[]).filter(r=>r.thumbnail&&!/gif|svg/i.test(r.filetype||'')).map(r=>({t:'img',url:r.thumbnail,credit:'Openverse – '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+' '+(r.license_version||'')+')'}));
@@ -254,8 +310,8 @@ const STOCK=[
 let deadV=0;
 async function gather(s,q){
  const L=STOCK.filter(p=>(!p.w||s.w)&&!deadS.has(p.id)&&(!p.key||keys[p.key]));
- const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|nasa/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
- const vc=L.map((p,k)=>[p.id,rs[k].filter(c=>c.t==='vid').length]).filter(x=>/video|nasa/.test(x[0]));
+ const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|^nasa$/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
+ const vc=L.map((p,k)=>[p.id,rs[k].filter(c=>c.t==='vid').length]).filter(x=>/video|^nasa$/.test(x[0]));
  if($('pv').checked&&vc.length)log('🎞 clips para "'+q+'": '+vc.map(x=>x.join(' ')).join(', '));
  const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !used.has(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
 }
@@ -448,7 +504,7 @@ async function getMedia(s,k){
 // ---------- Voz natural ----------
 const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','ErXwobaYiN019PkySvjV','pNInz6obpgDQGcFmaJgB','VR6AewLTigWG4xSOukaG','21m00Tcm4TlvDq8ikWAM','TxGEqnHWrfWFTfGW9XjX'],gm:['Kore','Charon','Algenib','Fenrir','Aoede','Puck'],pl:['nova','echo','onyx','fable','shimmer','alloy']};
 const TTS=[
- {id:'elevenlabs',key:'elevenlabs',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2'})})).arrayBuffer())},
+ {id:'elevenlabs',key:'elevenlabs',f:async(t,v,pt,nt)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2',previous_text:pt||undefined,next_text:nt||undefined,voice_settings:{stability:.45,similarity_boost:.8,style:.35,use_speaker_boost:true}})})).arrayBuffer())},
  {id:'gemini',key:'gemini',f:async(t,v)=>{
   const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v==0||v==4?'Di con tono sereno y cálido de narradora de documental: ':'Di con voz grave, pausada y envolvente de narrador de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
@@ -472,8 +528,8 @@ async function voices(){
  for(const p of TTS.filter(p=>!p.key||keys[p.key])){
   log('Voz: '+p.id);let ok=true,idx=0,done=0;scenes.forEach(s=>s.a=null);
   const w=async()=>{while(idx<scenes.length&&ok&&!cancel){
-   const s=scenes[idx++];let a=null;
-   for(let n=0;n<3&&!a&&ok&&!cancel;n++){try{a=await p.f(s.n,v)}catch(e){log('✗ voz '+p.id+': '+em(e));if(/^(401|402|403)/.test(e.message)){ok=false}else await sleep(6000*(n+1))}}
+   const k=idx++,s=scenes[k];let a=null;
+   for(let n=0;n<3&&!a&&ok&&!cancel;n++){try{a=await p.f(s.n,v,(scenes[k-1]||{}).n,(scenes[k+1]||{}).n)}catch(e){log('✗ voz '+p.id+': '+em(e));if(/^(401|402|403)/.test(e.message)){ok=false}else await sleep(6000*(n+1))}}
    if(!a){if(ok&&!cancel)log('✗ voz '+p.id+' se agotó; rehago TODAS las voces con otro proveedor para mantener la misma voz');ok=false;break}
    s.a=a;done++;prog(.6+.4*done/scenes.length);log(`voz ${done}/${scenes.length}`)}};
   await Promise.all([w(),w()]);
@@ -483,17 +539,17 @@ async function voices(){
 }
 let music=null,mAuto=false;
 // Música ambiental generada (sin archivos ni claves): pad cinematográfico en bucle sin cortes, la tonalidad depende del tema
-async function synthMusic(seed){
+async function synthMusic(seed,sty){
  const SR=44100,L=48,T=4,OC=window.OfflineAudioContext||window.webkitOfflineAudioContext,oc=new OC(2,SR*(L+T),SR),root=[45,47,43,40][seed%4],
- P=[[[0,3,7],[-4,0,3],[3,7,10],[-2,2,5]],[[0,3,7],[5,8,12],[-4,0,3],[-5,-1,2]]][(seed>>2)&1],f=n=>440*Math.pow(2,(n-69)/12),cl=L/4;
+ sm={clasico:[0,700,1.5],misterio:[1,450,2],curiosidades:[0,1400,.75],educativo:[1,1000,1.5],shorts:[0,1600,.75]}[sty]||[0,700,1.5],P=[[[0,3,7],[-4,0,3],[3,7,10],[-2,2,5]],[[0,3,7],[5,8,12],[-4,0,3],[-5,-1,2]]][sm[0]],f=n=>440*Math.pow(2,(n-69)/12),cl=L/4;
  const out=oc.createGain(),rv=oc.createConvolver(),ir=oc.createBuffer(2,SR*3,SR);
  for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2.5)}
  rv.buffer=ir;const wet=oc.createGain();wet.gain.value=.6;out.connect(oc.destination);out.connect(rv);rv.connect(wet);wet.connect(oc.destination);
  P.forEach((ch,ci)=>{const t=ci*cl;
-  ch.forEach((iv,k)=>{for(const dt of [-7,7]){const o=oc.createOscillator(),lp=oc.createBiquadFilter(),g=oc.createGain();o.type='sawtooth';o.frequency.value=f(root+iv+12);o.detune.value=dt;lp.type='lowpass';lp.frequency.value=700;
+  ch.forEach((iv,k)=>{for(const dt of [-7,7]){const o=oc.createOscillator(),lp=oc.createBiquadFilter(),g=oc.createGain();o.type='sawtooth';o.frequency.value=f(root+iv+12);o.detune.value=dt;lp.type='lowpass';lp.frequency.value=sm[1];
    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.05,t+3);g.gain.setValueAtTime(.05,t+cl-.5);g.gain.linearRampToValueAtTime(0,t+cl+3);o.connect(lp);lp.connect(g);g.connect(out);o.start(t);o.stop(t+cl+3.2)}});
   const b=oc.createOscillator(),bg=oc.createGain();b.frequency.value=f(root+ch[0]-12);bg.gain.setValueAtTime(0,t);bg.gain.linearRampToValueAtTime(.12,t+2);bg.gain.setValueAtTime(.12,t+cl-.5);bg.gain.linearRampToValueAtTime(0,t+cl+2.5);b.connect(bg);bg.connect(out);b.start(t);b.stop(t+cl+2.7);
-  for(let j=0;j<cl/1.5;j++){const o=oc.createOscillator(),g=oc.createGain(),at=t+j*1.5;o.type='sine';o.frequency.value=f(root+ch[(j*2)%3]+24);g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(.045,at+.02);g.gain.exponentialRampToValueAtTime(.0001,at+2.2);o.connect(g);g.connect(out);o.start(at);o.stop(at+2.3)}
+  for(let j=0;j<cl/sm[2];j++){const o=oc.createOscillator(),g=oc.createGain(),at=t+j*sm[2];o.type='sine';o.frequency.value=f(root+ch[(j*2)%3]+24);g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(.045,at+.02);g.gain.exponentialRampToValueAtTime(.0001,at+2.2);o.connect(g);g.connect(out);o.start(at);o.stop(at+2.3)}
  });
  const r=await oc.startRendering(),o=ctx.createBuffer(2,SR*L,SR);let pk=0.0001;
  for(let c=0;c<2;c++){const a=r.getChannelData(c),d=o.getChannelData(c);d.set(a.subarray(0,SR*L));for(let i=0;i<SR*T;i++)d[i]+=a[SR*L+i];for(let i=0;i<d.length;i++)pk=Math.max(pk,Math.abs(d[i]))}
@@ -503,10 +559,57 @@ $('mus').onchange=async e=>{try{mAuto=false;music=e.target.files[0]?await ctx.de
 
 // ---------- Generación ----------
 let scenes=[],title='',cancel=false;
-$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button>');
+$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="cont" style="display:none">✅ Continuar con este guion</button><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button><label style="display:block;margin-top:10px">Cambiar una escena</label><select id="esc"></select><button class="s" id="esn" disabled>🔄 Buscar otra imagen o vídeo</button><label style="display:block;margin-top:6px">📷 O usa tu propia foto en esa escena</label><input id="esu" type="file" accept="image/*"><button class="s" id="mt" disabled>📝 Título, descripción y hashtags</button><textarea id="meta" readonly style="min-height:110px;font-size:12px"></textarea><button class="s" id="th" disabled>🖼 Crear miniatura</button><div id="thimg"></div>');
+let contR=null;
+const STY={clasico:'Estilo documental clásico: tono sereno, pausado y majestuoso.',curiosidades:'Estilo curiosidades: dinámico, frases cortas y cada escena con un dato sorprendente.',misterio:'Estilo misterio / true crime: tono grave, suspense, pistas que se van revelando y un giro final.',educativo:'Estilo educativo: claro y ordenado, con ejemplos sencillos, de lo básico a lo complejo.',shorts:'Estilo Shorts viral: ritmo muy rápido, un gancho brutal en la primera frase y un cierre que invite a volver a verlo.'};
+$('cont').onclick=()=>contR&&contR();
+const credits=()=>{$('cred').value=[...new Set([...scenes.map(s=>s.m&&s.m.credit),...scenes.map(s=>s.ac)].filter(Boolean))].join('\n')};
+const applyM=s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;relayout();credits();render(pos)};
+$('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{s._r=0;s.m=await getMedia(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
+$('esu').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{s.m={img:await createImageBitmap(f),credit:'Foto propia'};applyM(s);log('✓ Escena '+(i+1)+': tu foto')}catch(er){log('❌ No pude leer esa foto')}e.target.value=''};
+$('mt').onclick=async()=>{$('mt').disabled=true;try{$('meta').value=await llm('Para un vídeo documental sobre "'+title+'" en '+($('lang').value==='es-ES'?'español':'English')+', con este guion: '+scenes.map(s=>s.n).join(' ')+'\n\nDevuelve en texto plano: 1) TÍTULO atractivo (máximo 70 caracteres, sin clickbait falso), 2) DESCRIPCIÓN de 3 a 4 líneas con palabras clave, 3) 12 HASHTAGS, 4) 3 ideas de TEXTO PARA LA MINIATURA (máximo 4 palabras cada una).')+'\n\nCapítulos (pégalos en la descripción):\n'+scenes.filter((s,i)=>!i||(s.o&&(s.o.k==='item'||s.o.k==='title'))).map(s=>tf(s.st)+' '+(s.o&&s.o.t?(s.o.n?s.o.n+'. ':'')+s.o.t:'Intro')).join('\n')+'\n\nCréditos:\n'+$('cred').value}catch(e){log('❌ '+e.message)}$('mt').disabled=false};
+$('th').onclick=async()=>{const sc=scenes.find(x=>x.img&&!x.v&&!x.c)||scenes.find(x=>!x.c);if(!sc)return;const keep=[$('sub').checked,$('lb').checked];$('sub').checked=$('lb').checked=false;try{render(sc.st+.2)}finally{$('sub').checked=keep[0];$('lb').checked=keep[1]}
+ const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.drawImage(cv,0,0);render(pos);const u=Math.min(W,H)/720,fs=(W>H?92:78)*u;
+ x.font='900 '+fs+'px system-ui,-apple-system,sans-serif';x.textAlign='left';x.lineJoin='round';const ls=[];let l='';for(const w of title.toUpperCase().split(/\s+/)){if(l&&x.measureText(l+' '+w).width>W*.82){ls.push(l);l=w}else l=(l+' '+w).trim()}ls.push(l);
+ const L3=ls.slice(0,3),y0=H-60*u-(L3.length-1)*fs*1.05,g=x.createLinearGradient(0,H*.4,0,H);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.85)');x.fillStyle=g;x.fillRect(0,H*.4,W,H*.6);
+ x.lineWidth=10*u;x.strokeStyle='#000';L3.forEach((t,k)=>{const yy=y0+k*fs*1.05;x.strokeText(t,50*u,yy);x.fillStyle=k===0?'#f5c542':'#fff';x.fillText(t,50*u,yy)});
+ const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.92)),url=URL.createObjectURL(blob),f=new File([blob],'miniatura.jpg',{type:'image/jpeg'});
+ $('thimg').innerHTML='<img style="width:100%;border-radius:8px;margin-top:8px" src="'+url+'"><button class="s" id="ths">💾 Guardar miniatura</button>';
+ $('ths').onclick=async()=>{try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}const a=document.createElement('a');a.href=url;a.download=f.name;a.click()}};
 try{$('gui').value=localStorage.getItem('vidia_gui')||''}catch(_){}
 const showGui=()=>{const t=scenes.map((s,i)=>(i+1)+'. '+s.n).join('\n');$('gui').value=title+'\n\n'+t;try{localStorage.setItem('vidia_gui',title+'\n\n'+t)}catch(_){}};
-function relayout(){let t=0;scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});return t}
+const AMB={};
+async function getAmb(t){if(t in AMB)return AMB[t];AMB[t]=null;
+ const j=await(await fj('https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=10&prop=videoinfo&viprop=derivatives|extmetadata|size|url&gsrsearch='+enc(t+' filetype:audio'))).json();
+ const c=Object.values((j.query||{}).pages||{}).map(p=>{const i=p.videoinfo&&p.videoinfo[0],m=i&&i.extmetadata,l=m&&m.LicenseShortName&&m.LicenseShortName.value;if(!i||!l||!/CC0|public domain|CC BY|PD/i.test(l)||/-N[CD]/i.test(l)||(i.size&&i.size>4e6)||(i.duration&&(i.duration<4||i.duration>120)))return null;
+  return{u:[...(i.derivatives||[]).filter(d=>/mpeg|mp3/.test(d.type)).map(d=>d.src),i.url].filter(Boolean),credit:'Audio: '+art(m)+' ('+l+')'}}).filter(Boolean);
+ for(const x of c.slice(0,4))for(const u of x.u){try{const b=await ctx.decodeAudioData(await(await fj(u)).arrayBuffer());let pk=.001;for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q+=7)pk=Math.max(pk,Math.abs(d[q]))}for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q++)d[q]/=pk}return AMB[t]={b,credit:x.credit}}catch(e){}}
+ try{const o=await(await fj('https://api.openverse.org/v1/audio/?page_size=8&license_type=commercial,modification&q='+enc(t))).json();
+  for(const r of (o.results||[]).slice(0,4)){if(!r.url||(r.duration&&r.duration>180000))continue;try{const ab=await(await fj(r.url)).arrayBuffer();if(ab.byteLength>5e6)continue;const b=await ctx.decodeAudioData(ab);let pk=.001;for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q+=7)pk=Math.max(pk,Math.abs(d[q]))}for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q++)d[q]/=pk}return AMB[t]={b,credit:'Audio: '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+') – Openverse'}}catch(e){}}}catch(e){}
+ return null}
+async function ambience(){const ts=[...new Set(scenes.map(s=>s.amb).filter(Boolean))].slice(0,8);let n=0;for(const t of ts){let r=null;try{r=await getAmb(t)||(t.includes(' ')?await getAmb(t.split(' ').slice(-2).join(' ')):null)}catch(e){}if(r){n++;scenes.forEach(s=>{if(s.amb===t){s.ab=r.b;s.ac=r.credit}})}}log('🔊 sonido ambiente real: '+n+' de '+ts.length+' encontrados')}
+let WORLD=null;
+function topoLines(t){const k=t.transform.scale,tr=t.transform.translate,arcs=t.arcs.map(a=>{let x=0,y=0;return a.map(p=>{x+=p[0];y+=p[1];return[x*k[0]+tr[0],y*k[1]+tr[1]]})}),rings=[],add=a=>{const r=[];a.forEach(i=>{const arc=i<0?arcs[~i].slice().reverse():arcs[i];r.push(...(r.length?arc.slice(1):arc))});rings.push(r)};
+ t.objects.countries.geometries.forEach(g=>{(g.type==='Polygon'?[g.arcs]:g.type==='MultiPolygon'?g.arcs:[]).forEach(poly=>poly.forEach(add))});return rings}
+async function loadWorld(){if(WORLD)return;try{WORLD=topoLines(await(await fj('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json')).json())}catch(e){log('ℹ sin mapa del mundo: '+em(e))}}
+async function geoFor(s){try{const j=await(await fj('https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=coordinates&redirects=1&titles='+enc(s.w))).json(),p=Object.values((j.query||{}).pages||{})[0],c=p&&p.coordinates&&p.coordinates[0];if(c)s.geo={lat:c.lat,lon:c.lon,name:(s.o&&s.o.t)||s.w}}catch(e){}}
+function drawMap(s,T){const g=s.geo;if(!g||!WORLD||!$('map').checked)return;const lt=T-s.st,st=.5,en=Math.min(st+5.2,s.dur-.3);if(lt<st||lt>en)return;
+ const a=Math.max(0,Math.min(1,(lt-st)/.5,(en-lt)/.5)),u=Math.min(W,H)/720,land=W>H,R=(land?92:84)*u,bh=$('lb').checked&&land?(H-W/2.39)/2:0,mx=W-40*u-R,my=land?bh+30*u+R:H*.3,pr=Math.min(1,(lt-st)/2.8),e=1-Math.pow(1-pr,3),lc=g.lon-80*(1-e),f0=g.lat*(.4+.6*e)*Math.PI/180,Rz=R*(1+.35*e),
+ P=(lo,la)=>{const l=(lo-lc)*Math.PI/180,f=la*Math.PI/180,c=Math.sin(f0)*Math.sin(f)+Math.cos(f0)*Math.cos(f)*Math.cos(l);return c<0?null:[mx+Rz*Math.cos(f)*Math.sin(l),my-Rz*(Math.cos(f0)*Math.sin(f)-Math.sin(f0)*Math.cos(f)*Math.cos(l))]};
+ cx.save();cx.globalAlpha=a;cx.beginPath();cx.arc(mx,my,R,0,7);cx.fillStyle='rgba(6,14,28,.82)';cx.fill();cx.save();cx.clip();
+ cx.beginPath();for(const r of WORLD){let on=false;for(let k=0;k<r.length;k++){const q=P(r[k][0],r[k][1]);if(q){on?cx.lineTo(q[0],q[1]):cx.moveTo(q[0],q[1]);on=true}else on=false}}
+ cx.strokeStyle='rgba(170,210,255,.7)';cx.lineWidth=1.2*u;cx.stroke();
+ const m=P(g.lon,g.lat);if(m){const ph=(lt*1.6)%1;cx.fillStyle='rgba(255,70,70,.95)';cx.beginPath();cx.arc(m[0],m[1],5*u,0,7);cx.fill();cx.strokeStyle='rgba(255,70,70,'+(1-ph)+')';cx.lineWidth=2*u;cx.beginPath();cx.arc(m[0],m[1],(5+22*ph)*u,0,7);cx.stroke()}
+ cx.restore();cx.beginPath();cx.arc(mx,my,R,0,7);cx.strokeStyle='#f5c542';cx.lineWidth=2.5*u;cx.stroke();
+ cx.font='700 '+15*u+'px system-ui,sans-serif';cx.textAlign='center';cx.fillStyle='#fff';cx.fillText(g.name.slice(0,24),mx,my+R+20*u);cx.restore()}
+const thumb=src=>{const c=document.createElement('canvas'),k=Math.min(1,384/Math.max(src.width,src.height));c.width=src.width*k|0;c.height=src.height*k|0;c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.7).split(',')[1]};
+async function director(){const L=scenes.map((x,i)=>({s:x,i,src:x.m&&(x.m.img||x.m.fb)})).filter(x=>x.src&&!x.s.c).slice(0,32),bad=[];
+ for(let b=0;b<L.length;b+=4){const part=L.slice(b,b+4),D=part.map(x=>thumb(x.src)),
+  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden. Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
+  for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(o&&o.ok===false&&part[o.i])bad.push({x:part[o.i],why:String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}}
+ log('🎬 Director: '+(bad.length?bad.length+' escenas no encajan':'todo en orden'));
+ for(const f of bad.slice(0,6)){if(cancel)break;log('🎬 escena '+(f.x.i+1)+': '+f.why+'; busco otra');try{f.x.s._r=0;f.x.s.m=await getMedia(f.x.s,f.x.i+Date.now()%1000)}catch(e){}}}
+function relayout(){let t=0;scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3+(s.p||0);s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});return t}
 $('rv').onclick=async()=>{if(!scenes.length||$('go').disabled)return;cancel=false;$('rv').disabled=$('go').disabled=true;ctx.resume();keepOn();log('Rehaciendo solo la voz…');
  try{const vp=await voices();if(!vp){scenes.forEach(s=>s.a=null);log('⚠ Sigue sin poder generarse la voz.')}else log('✓ Voz lista ('+vp+')');const t=relayout();log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);pos=0;render(0)}catch(e){log('❌ '+e.message)}
  keepOff();$('go').disabled=$('rv').disabled=false};
@@ -518,24 +621,35 @@ $('go').onclick=async()=>{
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas 13 palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (otra búsqueda alternativa y más amplia, en inglés), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[$('sty').value]} Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas 13 palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
-   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null})});
+   arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null,
+    o:o.o&&o.o.t?{k:['item','title','stat'].includes(o.o.k)?o.o.k:'title',n:o.o.n!=null?String(o.o.n).slice(0,3):'',t:String(o.o.t).slice(0,40),s:o.o.s?String(o.o.s).slice(0,56):''}:null,
+    amb:o.a&&o.a!=='null'?String(o.a).slice(0,40):'',g:o.g===true&&!!o.w&&o.w!=='null',p:Math.min(1.2,Math.max(0,+o.p||0)),tr:['fade','cut','dip','flash'].includes(o.tr)?o.tr:'fade'})});
    prog(0.2*e/total);
   }
-  showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»). Buscando imágenes/video y generando voz…`);
+  if(scenes.length>=6&&!cancel){try{const N=scenes.length,r=parseArr(await llm(`Eres editor de guiones de documentales. Este es el guion de una voz en off, un array JSON de ${N} frases, cada una asociada a su escena visual. Mejóralo: quita repeticiones de ideas y de palabras, añade uno o dos ganchos de retención a mitad (del tipo «pero lo más sorprendente viene ahora», reformulados), haz que cada frase suene natural dicha en voz alta y suaviza o elimina cualquier dato del que no estés seguro. Mantén EXACTAMENTE ${N} frases, en el mismo orden y con el mismo tema cada una (las que presentan un elemento de una lista conservan su número y su nombre), en ${L}, sin cifras ni abreviaturas. Devuelve SOLO el array JSON de ${N} strings.\n\n`+JSON.stringify(scenes.map(s=>s.n))));if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)){r.forEach((x,i)=>scenes[i].n=x);log('✎ guion pulido en una segunda pasada')}}catch(e){log('ℹ segunda pasada del guion omitida')}}
+  showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»).`);
+  if($('rvw').checked){$('gui').readOnly=false;$('cont').style.display='block';$('gui').scrollIntoView({block:'center'});log('✏ Edita el guion si quieres (una escena por línea numerada) y pulsa «Continuar con este guion».');await new Promise(r=>contR=r);contR=null;$('cont').style.display='none';$('gui').readOnly=true;if(cancel)throw new Error('Cancelado');
+   $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1])scenes[m[1]-1].n=m[2].trim()});showGui()}
+  log('Buscando imágenes/video y generando voz…');
   let idx=0,done=0;
   const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMedia(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
   await Promise.all([worker(),worker()]);
   if(cancel)throw new Error('Cancelado');
-  log('Generando voz (una sola voz para todo el video)…');
+  if($('dir').checked&&$('chk').checked)try{log('🎬 El director revisa el montaje…');await director()}catch(e){log('ℹ director omitido: '+em(e))}
+  if($('amb').checked)try{log('🔊 Buscando sonido ambiente real…');await ambience()}catch(e){log('ℹ sin sonido ambiente: '+em(e))}
+  if($('map').checked&&scenes.some(s=>s.g))try{log('🗺 Preparando mapas…');await Promise.all([loadWorld(),...scenes.filter(s=>s.g).slice(0,14).map(geoFor)])}catch(e){}
+  if(cancel)throw new Error('Cancelado');
+  log('Generando voz (una sola voz para todo el video; unos '+scenes.reduce((a,s)=>a+s.n.length,0)+' caracteres)…');
   const vp=await voices();if(cancel)throw new Error('Cancelado');
   if(!vp){scenes.forEach(s=>s.a=null);log('⚠ No se pudo generar la voz; el video saldrá sin voz.')}
   if(mAuto)music=null;
-  if(!music&&$('amb').checked){try{music=await synthMusic([...topic].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)>>>0);mAuto=true;log('🎵 música de fondo generada')}catch(e){log('✗ música: '+em(e))}}
-  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
-  $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
+  if(!music&&$('amb').checked){try{music=await synthMusic([...topic].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)>>>0,$('sty').value);mAuto=true;log('🎵 música de fondo generada')}catch(e){log('✗ música: '+em(e))}}
+  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3+(s.p||0);s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
+  credits();
+  $('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));$('esn').disabled=$('mt').disabled=$('th').disabled=false;
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
@@ -596,8 +710,9 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
   bgc.getContext('2d').drawImage(src,(bw-sw*bb)/2,(bh-sh*bb)/2,sw*bb,sh*bb);
   cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality='high';cx.drawImage(bgc,0,0,W,H);cx.fillStyle='rgba(0,0,0,.4)';cx.fillRect(0,0,W,H);
   const b=Math.min(W/sw,H/sh)*(s.v?1:(md===1?1.06-.06*t:1+.06*t)),w=sw*b,h=sh*b;cx.drawImage(src,(W-w)/2,(H-h)/2,w,h);return}
- const b=Math.max(W/sw,H/sh),w=sw*b*z,h=sh*b*z,cl=(v,m)=>Math.min(0,Math.max(m,v));
- let x=(W-w)/2+px,y=(H-h)/2;
+ const nS=Math.max(1,Math.round(s.dur/3.4)),kS=Math.min(nS-1,Math.floor(t*nS)),tS=t*nS-kS,zs=[[1,1.1],[1.25,1.15],[1.12,1.26],[1.3,1.18]][(i+kS)%4],zc=s.v?[1.04,1.2,1.08,1.28][kS%4]*(1+.03*tS):zs[0]+(zs[1]-zs[0])*tS,fx=(land||s.v)?.5:[.5,.35,.65,.5][(i+kS)%4],fy=[.5,.42,.5,.45][(i+kS)%4];
+ const b=Math.max(W/sw,H/sh),w=sw*b*zc,h=sh*b*zc,cl=(v,m)=>Math.min(0,Math.max(m,v));
+ let x=(W-w)*fx+px,y=(H-h)*fy;
  if(s.sal&&!land){
   const dr=s.v?0:(t-.5)*(md%2?-1:1);
   if(w>W+2){x=cl(W/2-bestWin(s.sal.col,W/w)*w,W-w);x=cl(x+dr*Math.min((w-W)*.15,120),W-w)}
@@ -605,15 +720,36 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  }
  cx.drawImage(src,x,y,w,h);
 }
+let gpat=null;const ov=i=>i&&scenes[i].tr!=='cut'&&scenes[i].tr!=='flash'?X:0,GR={clasico:'contrast(1.06) saturate(1.1)',misterio:'contrast(1.14) saturate(.8) brightness(.94)',curiosidades:'contrast(1.08) saturate(1.25)',educativo:'contrast(1.03) saturate(1.05)',shorts:'contrast(1.1) saturate(1.3)'};
+const ovT=s=>{if(!s.o||!s.a||s.o.k==='title')return .4;const w=(s.o.t||'').toLowerCase().split(/\s+/)[0],i=w?s.n.toLowerCase().indexOf(w):-1;return i<0?.4:Math.max(.4,Math.min(i/s.n.length*s.a.duration-.25,s.dur-2))};
+function drawOv(s,T){const o=s.o;if(!o||!o.t)return;const lt=T-s.st,st=ovT(s),en=Math.min(st+4.2,s.dur-.4);if(lt<st||lt>en)return;
+ const a=Math.min(1,(lt-st)/.45,(en-lt)/.45),e=1-Math.pow(1-Math.min(1,(lt-st)/.6),3),u=Math.min(W,H)/720,land=W>H,bh=$('lb').checked&&land?(H-W/2.39)/2:0,F='system-ui,-apple-system,"Segoe UI",sans-serif';
+ cx.save();cx.globalAlpha=Math.max(0,a);
+ if(o.k==='title'){const fs=(land?54:44)*u,ls=(cx.font='800 '+fs+'px '+F,wrap(o.t.toUpperCase(),W-120*u)),y=H*.42,lw=Math.min(W*.5,180*u)*e;cx.textAlign='center';
+  const g=cx.createLinearGradient(0,y-fs*2,0,y+fs*2.6+ls.length*fs);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(.5,'rgba(0,0,0,.55)');g.addColorStop(1,'rgba(0,0,0,0)');cx.fillStyle=g;cx.fillRect(0,y-fs*2,W,fs*4.6+ls.length*fs);
+  cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l.trim(),W/2,y+k*fs*1.15));cx.fillStyle='#f5c542';cx.fillRect(W/2-lw/2,y-fs*1.1,lw,3*u);cx.fillRect(W/2-lw/2,y+ls.length*fs*1.15-fs*.4,lw,3*u);
+  if(o.s){cx.font='500 '+fs*.42+'px '+F;cx.fillStyle='rgba(255,255,255,.85)';cx.fillText(o.s,W/2,y+ls.length*fs*1.15+fs*.55)}
+ }else{const big=o.k==='item'&&o.n,nf=(land?96:84)*u,nw=big?nf*(o.n.length>1?1.2:.75)+24*u:0;let tf=(land?38:30)*u;cx.font='800 '+tf+'px '+F;const k=Math.min(1,(W-nw-130*u)/cx.measureText(o.t).width);tf*=k;const sf=tf*.55;
+  cx.font='800 '+tf+'px '+F;const tw=cx.measureText(o.t).width;cx.font='500 '+sf+'px '+F;const sw=o.s?cx.measureText(o.s).width:0,
+  pw=Math.min(W-40*u,nw+Math.max(tw,sw)+60*u),ph=Math.max(big?nf*1.05:0,tf*1.3+(o.s?sf*1.5:0))+30*u,px=land?60*u:(W-pw)/2,py=land?bh+34*u:H*.16;
+  cx.translate((1-e)*-60*u,0);cx.fillStyle='rgba(8,8,12,.74)';cx.fillRect(px,py,pw,ph);cx.fillStyle='#f5c542';cx.fillRect(px,py,6*u,ph);cx.textAlign='left';let tx=px+28*u;
+  if(big){cx.font='900 '+nf+'px '+F;cx.fillStyle='#f5c542';cx.fillText(o.n,tx,py+ph/2+nf*.34);tx+=nw}
+  cx.font='800 '+tf+'px '+F;cx.fillStyle='#fff';cx.fillText(o.t,tx,py+(o.s?ph/2-sf*.1:ph/2+tf*.34));
+  if(o.s){cx.font='500 '+sf+'px '+F;cx.fillStyle='rgba(255,255,255,.8)';cx.fillText(o.s,tx,py+ph/2+sf*1.35)}}
+ cx.restore()}
 function render(T){ui(T);
- const A=[];scenes.forEach((s,i)=>{if(T>=s.st-(i?X:0)&&T<=s.st+s.dur)A.push(i)});
- cx.fillStyle='#000';cx.fillRect(0,0,W,H);cx.filter='contrast(1.06) saturate(1.1)';
- for(const i of A){const s=scenes[i],o=i?X:0;cx.globalAlpha=i?Math.min(1,(T-s.st+X)/X):1;drawM(s,Math.min(1,Math.max(0,(T-s.st+o)/(s.dur+o))),i)}
+ const A=[];scenes.forEach((s,i)=>{if(T>=s.st-ov(i)&&T<=s.st+s.dur)A.push(i)});
+ cx.fillStyle='#000';cx.fillRect(0,0,W,H);cx.filter=GR[$('sty').value]||GR.clasico;
+ for(const i of A){const s=scenes[i],o=ov(i);cx.globalAlpha=o?Math.min(1,(T-s.st+o)/o):1;drawM(s,Math.min(1,Math.max(0,(T-s.st+o)/(s.dur+o))),i)}
  cx.globalAlpha=1;cx.filter='none';
+ scenes.forEach((s,i)=>{if(!i)return;if(s.tr==='dip'&&T>=s.st-X&&T<=s.st){cx.fillStyle='rgba(0,0,0,'+.92*Math.sin(Math.PI*(T-s.st+X)/X)+')';cx.fillRect(0,0,W,H)}else if(s.tr==='flash'&&T>=s.st&&T<s.st+.28){cx.fillStyle='rgba(255,255,255,'+.75*(1-(T-s.st)/.28)+')';cx.fillRect(0,0,W,H)}});
  scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i)&&playing&&!paused;if(on&&s.v.paused&&!s.v.ended)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
+ if(!gpat){const gc=document.createElement('canvas');gc.width=gc.height=160;const gx=gc.getContext('2d'),id=gx.createImageData(160,160);for(let q=0;q<id.data.length;q+=4){const v=Math.random()*255;id.data[q]=id.data[q+1]=id.data[q+2]=v;id.data[q+3]=255}gx.putImageData(id,0,0);gpat=cx.createPattern(gc,'repeat')}
+ cx.save();cx.translate(-Math.random()*160,-Math.random()*160);cx.globalAlpha=.06;cx.fillStyle=gpat;cx.fillRect(0,0,W+160,H+160);cx.restore();
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
- if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.3,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
+ if(cur){drawOv(cur,T);drawMap(cur,T)}
+ if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.3,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,$('sty').value==='shorts'?16:isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
   const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(c,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
   cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l,W/2,y0+k*lh))}
  if($('lb').checked&&W>H){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
@@ -638,9 +774,15 @@ async function run(rec,from=0){
  vg.connect(dest);if(!rec&&!ok)vg.connect(ctx.destination);
  scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
  if($('amb').checked){const nb=ctx.createBuffer(1,ctx.sampleRate*1.3|0,ctx.sampleRate),nd=nb.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
-  scenes.forEach((s,i)=>{const t=s.st-(i?X:0)-from;if(t<0)return;const at=t0+t,n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=.8;fl.frequency.setValueAtTime(250,at);fl.frequency.exponentialRampToValueAtTime(3000,at+.9);
+  scenes.forEach((s,i)=>{if(i&&s.tr==='cut')return;const t=s.st-(i&&s.tr!=='flash'?X:0)-from;if(t<0)return;const at=t0+t;
+   if(s.o){const ts=t0+s.st+ovT(s)-from;if(ts>t0-.1){const o=ctx.createOscillator(),og=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(880,ts);o.frequency.exponentialRampToValueAtTime(520,ts+.14);og.gain.setValueAtTime(.0001,ts);og.gain.linearRampToValueAtTime(.07,ts+.01);og.gain.exponentialRampToValueAtTime(.0001,ts+.2);o.connect(og);og.connect(vg);o.start(ts);o.stop(ts+.25);srcs.push(o)}}
+   if(i&&(s.tr==='flash'||s.tr==='dip')){const ra=at-1.1;if(ra>t0-.05){const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=1.2;fl.frequency.setValueAtTime(400,ra);fl.frequency.exponentialRampToValueAtTime(4500,at);g.gain.setValueAtTime(.0001,ra);g.gain.linearRampToValueAtTime(.09,at-.05);g.gain.linearRampToValueAtTime(.0001,at+.05);n.connect(fl);fl.connect(g);g.connect(vg);n.start(ra);n.stop(at+.1);srcs.push(n)}}
+   if(s.tr==='flash'){const o=ctx.createOscillator(),og=ctx.createGain();o.frequency.setValueAtTime(120,at);o.frequency.exponentialRampToValueAtTime(40,at+.35);og.gain.setValueAtTime(.45,at);og.gain.exponentialRampToValueAtTime(.0001,at+.5);o.connect(og);og.connect(vg);o.start(at);o.stop(at+.6);srcs.push(o);return}
+   const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=.8;fl.frequency.setValueAtTime(250,at);fl.frequency.exponentialRampToValueAtTime(3000,at+.9);
    g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.12:.18,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
- if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=mAuto?.17:.12;n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
+ if($('amb').checked)scenes.forEach((s,i)=>{if(!s.ab||s.st+s.dur<=from)return;const at=t0+Math.max(0,s.st-(i?X:0)-from),en=t0+s.st+s.dur-from+.3,n=ctx.createBufferSource(),g=ctx.createGain();n.buffer=s.ab;n.loop=true;g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(.22,at+.8);g.gain.setValueAtTime(.22,Math.max(at+.8,en-.8));g.gain.linearRampToValueAtTime(.0001,en);n.connect(g);g.connect(vg);n.start(at,Math.random()*Math.max(0,s.ab.duration-1));n.stop(en+.1);srcs.push(n)});
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;const B=(mAuto?.17:.12)*(scenes.some(s=>s.a)?.8:1.6),g=mg.gain;g.setValueAtTime(.0001,t0);g.linearRampToValueAtTime(B,t0+(from?.4:2.5));
+  scenes.forEach(s=>{if(s.p>=.4&&s.a){const at=t0+s.st+s.a.duration-from;if(at>t0){g.setTargetAtTime(B*1.7,at,.25);g.setTargetAtTime(B,at+s.p,.4)}}});g.setTargetAtTime(.0001,t0+total-from-2.8,.9);n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
  if(rec){const mt=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
@@ -659,7 +801,7 @@ $('play').onclick=()=>{if(rc)return;if(!playing)return run(false,pos>=DUR()-1?0:
 $('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textContent=tf(t)+' / '+tf(DUR());if(!playing)render(t)};
 $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
 $('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Grabación terminada: pulsa «Guardar vídeo» debajo del botón de exportar.'))};
-$('stop').onclick=()=>{keepOff();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
+$('stop').onclick=()=>{keepOff();contR&&contR();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 </script>
 </body>
 </html>
