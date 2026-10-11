@@ -74,6 +74,7 @@ small{color:var(--mut)}
 <label class="chk"><input id="map" type="checkbox" checked> 🗺 Mini-mapa del mundo en las escenas de lugares</label>
 <label>Estilo del guion</label><select id="sty"><option value="auto">🎯 Automático (la IA elige según tu tema)</option><option value="top">Top / ranking (cuenta atrás)</option><option value="animales">Naturaleza y animales</option><option value="espacio">Espacio y universo</option><option value="planeta">Planeta y lugares</option><option value="historia">Historia</option><option value="ciencia">Ciencia y tecnología</option><option value="biografia">Biografía</option><option value="clasico">Documental clásico (sereno)</option><option value="curiosidades">Curiosidades (dinámico)</option><option value="misterio">Misterio / true crime</option><option value="educativo">Educativo (claro)</option><option value="shorts">Shorts viral (rápido)</option></select>
 <details style="margin-top:10px"><summary>📐 Reglas del guion (tu prompt maestro)</summary><textarea id="rules" style="min-height:170px;font-size:12px"></textarea><button class="s" id="rulesReset" type="button">↺ Restaurar reglas por defecto</button><small>Se aplican al escribir el guion y luego se revisan una a una con un checklist PASA/FALLA. Se guardan en este navegador. Déjalo vacío para no usarlas.</small></details>
+<details style="margin-top:10px"><summary>🎙 Elegir voz de Deepgram</summary><select id="dgv"></select><button class="s" id="dgp" type="button">▶ Escuchar esta voz</button><small>Solo para español. «Automática» usa la opción «Voz» de arriba. La voz elegida se guarda en este navegador. Los nombres vienen de la documentación de Deepgram; si alguna no funciona con tu clave, saldrá el error al escucharla.</small></details>
 <details style="margin-top:10px"><summary>🧪 Diagnóstico del dispositivo</summary><button class="s" id="diag" type="button">Comprobar WebCodecs en este móvil</button><small>Solo mira qué codificadores admite este navegador; no cambia nada.</small></details>
 <label class="chk"><input id="wiki" type="checkbox" checked> 📚 Usar Wikipedia como base de datos reales del guion</label>
 <label class="chk"><input id="rvw" type="checkbox"> Revisar y editar el guion antes de buscar imágenes</label>
@@ -123,7 +124,7 @@ try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}ca
  $('kps').onclick=()=>{const t=prompt('Pega aquí el código de claves');if(!t)return;try{Object.assign(keys,JSON.parse(atob(t.trim().replace(/^VIDIA:/,''))));localStorage.setItem('vidia_keys',JSON.stringify(keys));document.querySelectorAll('#keys input').forEach(i=>i.value=keys[i.dataset.k]||'');alert('Claves cargadas')}catch(e){alert('Código no válido')}}}
 const log=t=>{const l=$('log');l.textContent+=t+'\n';l.scrollTop=l.scrollHeight};
 const prog=p=>$('bar').firstElementChild.style.width=(p*100)+'%';
-const deadT=new Set(),deadI=new Set(),deadS=new Set(),deadA=new Set(),fatal=m=>/^(401|402|403|429)/.test(m),em=e=>String((e&&e.message)||e).replace(/\s+/g,' ').slice(0,110);
+const deadT=new Set(),deadI=new Set(),deadS=new Set(),strikeS={},deadA=new Set(),fatal=m=>/^(401|402|403|410|429)/.test(m),em=e=>String((e&&e.message)||e).replace(/\s+/g,' ').slice(0,110);
 
 // ---------- Guion ----------
 const LIST={groq:'https://api.groq.com/openai/v1/models',cerebras:'https://api.cerebras.ai/v1/models',mistral:'https://api.mistral.ai/v1/models',openrouter:'https://openrouter.ai/api/v1/models'};
@@ -336,7 +337,7 @@ const STOCK=[
 let deadV=0;
 async function gather(s,q){
  const L=STOCK.filter(p=>(!p.w||s.w)&&!deadS.has(p.id)&&!(coolS[p.id]>Date.now())&&(!p.key||keys[p.key]));
- const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|^nasa$/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(/^429/.test(e.message)){coolS[p.id]=Date.now()+45000;log('⏳ '+p.id+': límite de uso, lo pauso 45 s')}else if(fatal(e.message))deadS.add(p.id);return[]}}));
+ const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|^nasa$/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(/^429/.test(e.message)){coolS[p.id]=Date.now()+45000;log('⏳ '+p.id+': límite de uso, lo pauso 45 s')}else if(fatal(e.message))deadS.add(p.id);else if(/Load failed|Failed to fetch/i.test(e.message)&&(strikeS[p.id]=(strikeS[p.id]||0)+1)>=3){deadS.add(p.id);log('⛔ '+p.id+': falla de red 3 veces, lo salto hasta recargar la app')}return[]}}));
  const vc=L.map((p,k)=>[p.id,rs[k].filter(c=>c.t==='vid').length]).filter(x=>/video|^nasa$/.test(x[0]));
  if($('pv').checked&&vc.length)log('🎞 clips para "'+q+'": '+vc.map(x=>x.join(' ')).join(', '));
  const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !isUsed(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
@@ -549,7 +550,7 @@ async function getMedia(s,k){
 const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','ErXwobaYiN019PkySvjV','pNInz6obpgDQGcFmaJgB','VR6AewLTigWG4xSOukaG','21m00Tcm4TlvDq8ikWAM','TxGEqnHWrfWFTfGW9XjX'],gm:['Kore','Charon','Algenib','Fenrir','Aoede','Puck'],pl:['nova','echo','onyx','fable','shimmer','alloy'],dgs:['aura-2-silvia-es','aura-2-javier-es','aura-2-nestor-es','aura-2-valerio-es','aura-2-diana-es','aura-2-aquila-es'],dge:['aura-2-thalia-en','aura-2-aries-en','aura-2-draco-en','aura-2-zeus-en','aura-2-athena-en','aura-2-apollo-en']};
 let noTs=0;
 const TTS=[
- {id:'deepgram',key:'deepgram',probe:1,f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.deepgram.com/v1/speak?encoding=mp3&model='+(($('lang').value==='es-ES'?VO.dgs:VO.dge)[v]),{method:'POST',headers:{Authorization:'Token '+keys.deepgram,'Content-Type':'application/json'},body:JSON.stringify({text:t})})).arrayBuffer())},
+ {id:'deepgram',key:'deepgram',probe:1,f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.deepgram.com/v1/speak?encoding=mp3&model='+(($('lang').value==='es-ES'&&$('dgv').value)||($('lang').value==='es-ES'?VO.dgs:VO.dge)[v]),{method:'POST',headers:{Authorization:'Token '+keys.deepgram,'Content-Type':'application/json'},body:JSON.stringify({text:t})})).arrayBuffer())},
  {id:'elevenlabs',key:'elevenlabs',f:async(t,v,pt,nt)=>{const H={'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},B=JSON.stringify({text:t,model_id:'eleven_multilingual_v2',previous_text:pt||undefined,next_text:nt||undefined,voice_settings:{stability:.45,similarity_boost:.8,style:.35,use_speaker_boost:true}}),U='https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v];
   // con tiempos reales por carácter (para subtítulos exactos); si falla, audio normal
   if(!noTs)try{const j=await(await fj(U+'/with-timestamps?output_format=mp3_44100_128',{method:'POST',headers:H,body:B})).json(),bin=atob(j.audio_base64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const b=await ctx.decodeAudioData(u.buffer);if(j.alignment&&j.alignment.characters)b.al=j.alignment;return b}catch(e){if(/^(401|402|403|429)/.test(e.message))throw e;noTs=1;log('ℹ ElevenLabs: sin tiempos de palabra ('+em(e)+'); uso el audio normal')}
@@ -695,13 +696,14 @@ let FACTS='';
 const EXTRA=()=>(RULES()?' REGLAS OBLIGATORIAS DEL CANAL (se revisarán una a una al final): '+RULES().replace(/\s*\n\s*/g,' ')+' ':'')+(FACTS?' DATOS DE REFERENCIA de Wikipedia (úsalos como base y no los contradigas; si no corresponden al tema, ignóralos; no afirmes nada que no esté aquí ni sepas con certeza): '+FACTS+' ':'');
 const showGui=()=>{const t=scenes.map((s,i)=>(i+1)+'. '+s.n).join('\n');$('gui').value=title+'\n\n'+t;try{localStorage.setItem('vidia_gui',title+'\n\n'+t)}catch(_){}};
 const AMB={};
+const BADA=/child|kid|people|crowd|voice|speech|speak|talk|convers|laugh|baby|human|playground|school|tourist|ni[nñ]os?|gente|voz|persona/i; // descarta ambientes con voces humanas
 async function getAmb(t){if(t in AMB)return AMB[t];AMB[t]=null;
  const j=await(await fj('https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=10&prop=videoinfo&viprop=derivatives|extmetadata|size|url&gsrsearch='+enc(t+' filetype:audio'))).json();
- const c=Object.values((j.query||{}).pages||{}).map(p=>{const i=p.videoinfo&&p.videoinfo[0],m=i&&i.extmetadata,l=m&&m.LicenseShortName&&m.LicenseShortName.value;if(!i||!l||!/CC0|public domain|CC BY|PD/i.test(l)||/-N[CD]/i.test(l)||(i.size&&i.size>4e6)||(i.duration&&(i.duration<4||i.duration>120)))return null;
+ const c=Object.values((j.query||{}).pages||{}).map(p=>{const i=p.videoinfo&&p.videoinfo[0],m=i&&i.extmetadata,l=m&&m.LicenseShortName&&m.LicenseShortName.value;if(!i||!l||!/CC0|public domain|CC BY|PD/i.test(l)||/-N[CD]/i.test(l)||(i.size&&i.size>4e6)||(i.duration&&(i.duration<4||i.duration>120))||BADA.test(p.title+' '+((m&&m.ImageDescription&&m.ImageDescription.value)||'')+' '+((m&&m.Categories&&m.Categories.value)||'')))return null;
   return{u:[...(i.derivatives||[]).filter(d=>/mpeg|mp3/.test(d.type)).map(d=>d.src),i.url].filter(Boolean),credit:'Audio: '+art(m)+' ('+l+')'}}).filter(Boolean);
  for(const x of c.slice(0,4))for(const u of x.u){try{const b=await ctx.decodeAudioData(await(await fj(u)).arrayBuffer());let pk=.001;for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q+=7)pk=Math.max(pk,Math.abs(d[q]))}for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q++)d[q]/=pk}return AMB[t]={b,credit:x.credit}}catch(e){}}
  try{const o=await(await fj('https://api.openverse.org/v1/audio/?page_size=8&license_type=commercial,modification&q='+enc(t))).json();
-  for(const r of (o.results||[]).slice(0,4)){if(!r.url||(r.duration&&r.duration>180000))continue;try{const ab=await(await fj(r.url)).arrayBuffer();if(ab.byteLength>5e6)continue;const b=await ctx.decodeAudioData(ab);let pk=.001;for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q+=7)pk=Math.max(pk,Math.abs(d[q]))}for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q++)d[q]/=pk}return AMB[t]={b,credit:'Audio: '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+') – Openverse'}}catch(e){}}}catch(e){}
+  for(const r of (o.results||[]).filter(r=>!BADA.test((r.title||'')+' '+(r.tags||[]).map(t=>t.name).join(' '))).slice(0,4)){if(!r.url||(r.duration&&r.duration>180000))continue;try{const ab=await(await fj(r.url)).arrayBuffer();if(ab.byteLength>5e6)continue;const b=await ctx.decodeAudioData(ab);let pk=.001;for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q+=7)pk=Math.max(pk,Math.abs(d[q]))}for(let k=0;k<b.numberOfChannels;k++){const d=b.getChannelData(k);for(let q=0;q<d.length;q++)d[q]/=pk}return AMB[t]={b,credit:'Audio: '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+') – Openverse'}}catch(e){}}}catch(e){}
  return null}
 async function ambience(){const ts=[...new Set(scenes.map(s=>s.amb).filter(Boolean))].slice(0,8);let n=0;for(const t of ts){let r=null;try{r=await getAmb(t)||(t.includes(' ')?await getAmb(t.split(' ').slice(-2).join(' ')):null)}catch(e){}if(r){n++;scenes.forEach(s=>{if(s.amb===t){s.ab=r.b;s.ac=r.credit}})}}log('🔊 sonido ambiente real: '+n+' de '+ts.length+' encontrados')}
 let WORLD=null;
@@ -949,6 +951,8 @@ async function prime(){
   s.lazy=0}));
 }
 // Iguala el volumen de cada frase de voz (cada escena se sintetiza por separado y puede sonar más baja o más alta)
+const AMB_REL=.15; // volumen del sonido ambiente respecto a la voz (.15 = 15 %); bájalo a .1 para menos
+function again(b){if(b._ag)return b._ag;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=4){const x=d[i];if(Math.abs(x)>.02){q+=x*x;n++}}const r=n>200?Math.sqrt(q/n):.2;return b._ag=Math.min(.6,AMB_REL*.14/Math.max(r,.01))}
 function vgain(b){if(b._g)return b._g;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=4){const x=d[i];if(Math.abs(x)>.02){q+=x*x;n++}}const r=n>200?Math.sqrt(q/n):0;return b._g=r>.01?Math.max(.6,Math.min(2.2,.14/r)):1}
 async function run(rec,from=0){
  stopF=paused=false;playing=true;rc=rec;pl();const pp=prime();try{navigator.audioSession.type='playback'}catch(_){}
@@ -967,7 +971,7 @@ async function run(rec,from=0){
    if(s.tr==='flash'){const o=ctx.createOscillator(),og=ctx.createGain();o.frequency.setValueAtTime(120,at);o.frequency.exponentialRampToValueAtTime(40,at+.35);og.gain.setValueAtTime(.45,at);og.gain.exponentialRampToValueAtTime(.0001,at+.5);o.connect(og);og.connect(vg);o.start(at);o.stop(at+.6);srcs.push(o);return}
    const n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=.8;fl.frequency.setValueAtTime(250,at);fl.frequency.exponentialRampToValueAtTime(3000,at+.9);
    g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.12:.18,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
- if($('amb').checked)scenes.forEach((s,i)=>{if(!s.ab||s.st+s.dur<=from)return;const at=t0+Math.max(0,s.st-(i?X:0)-from),en=t0+s.st+s.dur-from+.3,n=ctx.createBufferSource(),g=ctx.createGain();n.buffer=s.ab;n.loop=true;g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(.22*PF().am,at+.8);g.gain.setValueAtTime(.22*PF().am,Math.max(at+.8,en-.8));g.gain.linearRampToValueAtTime(.0001,en);n.connect(g);g.connect(vg);n.start(at,Math.random()*Math.max(0,s.ab.duration-1));n.stop(en+.1);srcs.push(n)});
+ if($('amb').checked)scenes.forEach((s,i)=>{if(!s.ab||s.st+s.dur<=from)return;const at=t0+Math.max(0,s.st-(i?X:0)-from),en=t0+s.st+s.dur-from+.3,n=ctx.createBufferSource(),g=ctx.createGain();n.buffer=s.ab;n.loop=true;g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(again(s.ab)*PF().am,at+.8);g.gain.setValueAtTime(again(s.ab)*PF().am,Math.max(at+.8,en-.8));g.gain.linearRampToValueAtTime(.0001,en);n.connect(g);g.connect(vg);n.start(at,Math.random()*Math.max(0,s.ab.duration-1));n.stop(en+.1);srcs.push(n)});
  if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;const B=(mAuto?(mReal?.1:.17):.12)*(scenes.some(s=>s.a)?.8:1.6),g=mg.gain;g.setValueAtTime(.0001,t0);g.linearRampToValueAtTime(B,t0+(from?.4:2.5));if(!from&&INTRO()>0){g.linearRampToValueAtTime(B*1.6,t0+INTRO()-.2);g.setTargetAtTime(B,t0+INTRO(),.7)}
   scenes.forEach(s=>{if(s.p>=.4&&s.a){const at=t0+s.st+s.a.duration-from;if(at>t0){g.setTargetAtTime(B*1.7,at,.25);g.setTargetAtTime(B,at+s.p,.4)}}});g.setTargetAtTime(.0001,t0+total-from-2.8,.9);n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
@@ -1001,6 +1005,16 @@ $('diag').onclick=async()=>{
  r.push('Navegador: '+navigator.userAgent);
  alert(r.join('\n'));
 };
+
+const DGV=['agustina','alvaro','antonia','aquila','carina','celeste','diana','estrella','gloria','javier','luciano','nestor','olivia','selena','silvia','sirio','valerio'];
+$('dgv').innerHTML='<option value="">Automática (según «Voz» de arriba)</option>'+DGV.map(n=>'<option value="aura-2-'+n+'-es">'+n[0].toUpperCase()+n.slice(1)+'</option>').join('');
+try{$('dgv').value=localStorage.getItem('vidia_dgv')||''}catch(_){}
+$('dgv').onchange=()=>{try{localStorage.setItem('vidia_dgv',$('dgv').value)}catch(_){}};
+$('dgp').onclick=async()=>{
+ if(!keys.deepgram){alert('Falta la clave de Deepgram en «Claves API».');return}
+ const m=$('dgv').value||VO.dgs[+$('voice').value];$('dgp').disabled=true;
+ try{await ctx.resume();const b=await ctx.decodeAudioData(await(await fj('https://api.deepgram.com/v1/speak?encoding=mp3&model='+m,{method:'POST',headers:{Authorization:'Token '+keys.deepgram,'Content-Type':'application/json'},body:JSON.stringify({text:'El pulpo tiene tres corazones, y dos de ellos se detienen cuando nada. Por eso prefiere arrastrarse.'})})).arrayBuffer());const n=ctx.createBufferSource();n.buffer=b;n.connect(ctx.destination);n.start()}catch(e){alert('No se pudo reproducir '+m+': '+em(e))}
+ $('dgp').disabled=false};
 </script>
 </body>
 </html>
