@@ -88,7 +88,7 @@ const LLMS=[
  {id:'openrouter',name:'OpenRouter',url:'https://openrouter.ai/api/v1/chat/completions',model:'meta-llama/llama-3.3-70b-instruct:free'},
  {id:'pollinations',name:'Pollinations texto',nokey:1,url:'https://text.pollinations.ai/openai',model:'openai'}
 ];
-const IMGS=[{id:'gemini'},{id:'together'},{id:'huggingface'},{id:'pollinations',nokey:1}];
+const IMGS=[{id:'gemini'},{id:'openai'},{id:'together'},{id:'huggingface'},{id:'pollinations',nokey:1}];
 const KEYIDS=['openai','pexels','pixabay','gemini','elevenlabs','groq','cerebras','mistral','openrouter','together','huggingface'];
 let keys={};try{keys=JSON.parse(localStorage.getItem('vidia_keys')||'{}')}catch(e){}
 $('keys').innerHTML=KEYIDS.map(k=>`<label>${k}</label><input data-k="${k}" type="password" value="${keys[k]||''}" autocomplete="off">`).join('');
@@ -134,7 +134,7 @@ async function callLLM(p,prompt){
   try{
    if(p.type==='openai'){
     const j=await(await fj(p.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,input:prompt,store:false})})).json();
-    const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');return tx;
+    const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');p.okm=m;return tx;
    }
    if(p.type==='gemini'){
     const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})})).json();
@@ -167,7 +167,10 @@ async function gimgModel(){
 async function imgFrom(p,prompt,seed){
  let r;
  if(p.id==='pollinations')r=await fj(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${isV()?720:1280}&height=${isV()?1280:720}&nologo=true&seed=${seed}`);
- else if(p.id==='gemini'){
+ else if(p.id==='openai'){
+  const j=await(await fj('https://api.openai.com/v1/images/generations',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:'gpt-image-1',prompt,size:isV()?'1024x1536':'1536x1024',n:1})})).json();
+  return await(await fetch('data:image/png;base64,'+j.data[0].b64_json)).blob();
+ }else if(p.id==='gemini'){
   const j=await(await fj(`${GL}/${await gimgModel()}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt+'. '+(isV()?'Vertical 9:16':'Horizontal 16:9')+' composition, no text.'}]}],generationConfig:{responseModalities:['IMAGE']}})})).json();
   const d=j.candidates[0].content.parts.map(x=>x.inlineData||x.inline_data).find(Boolean);if(!d)throw new Error('500 sin imagen');
   return await(await fetch('data:'+(d.mimeType||d.mime_type||'image/png')+';base64,'+d.data)).blob();
@@ -244,13 +247,14 @@ async function gather(s,q){
  if($('pv').checked&&vc.length)log('🎞 clips para "'+q+'": '+vc.map(x=>x.join(' ')).join(', '));
  const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !used.has(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
 }
-const deadJ=new Set(),coolJ={},gate={},GAP={gemini:4500,groq:2500,mistral:1600,openrouter:3000,pollinations:3000},BADV=/whisper|guard|embed|tts|moderation|safeguard|ocr|transcribe/i;
+const deadJ=new Set(),coolJ={},gate={},GAP={openai:1500,gemini:4500,groq:2500,mistral:1600,openrouter:3000,pollinations:3000},BADV=/whisper|guard|embed|tts|moderation|safeguard|ocr|transcribe/i;
 async function slot(id){const n=Date.now(),t=Math.max(n,gate[id]||0);gate[id]=t+(GAP[id]||0);if(t>n)await sleep(t-n)}
 // Jueces de imagen, en orden de prioridad: el primero que responda decide
 const VJ=[
  {id:'gemini',max:14},
  {id:'groq',max:3,re:/llama-4|scout|maverick|vision|-vl\b|-vl-|qwen\/qwen3\.[6-9]|qwen\/qwen[4-9]/,mt:1200,url:'https://api.groq.com/openai/v1/chat/completions'},
  {id:'mistral',max:4,re:/pixtral|mistral-(small|medium|large)-latest/,url:'https://api.mistral.ai/v1/chat/completions'},
+ {id:'openai',max:5},
  {id:'openrouter',max:4,re:/./,vf:m=>/:free$/.test(m.id)&&((m.architecture||{}).input_modalities||[]).includes('image'),url:'https://openrouter.ai/api/v1/chat/completions'},
  {id:'pollinations',nokey:1,max:4,fixed:['openai'],url:'https://text.pollinations.ai/openai'}
 ];
@@ -273,6 +277,10 @@ async function ask(v,D,t,vid){
    }catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
   throw er||new Error('503 sin respuesta');
+ }
+ if(v.id==='openai'){
+  const L=LLMS[0],m=L.okm||L.model,j=await(await fj(L.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,store:false,input:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'input_text',text:'Imagen '+i+':'},{type:'input_image',image_url:'data:image/jpeg;base64,'+d}]),{type:'input_text',text:t}]}]})})).json();
+  const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');v.last=m;return tx;
  }
  if(v.nm)throw new Error('404 sin modelo de visión');
  if(!v.ms){
