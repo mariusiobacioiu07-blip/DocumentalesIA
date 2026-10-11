@@ -43,7 +43,7 @@ small{color:var(--mut)}
 <label>Prompt / tema del documental</label>
 <textarea id="topic" placeholder="Ej: La caída del Imperio romano"></textarea>
 <div class="row">
-<div><label>Duración</label><select id="min"><option value="0.5" selected>30 segundos (prueba)</option><option value="1">1 minuto</option><option value="2">2 minutos</option><option value="5">5 minutos</option><option value="10">10 minutos</option><option value="15">15 minutos</option><option value="20">20 minutos</option></select></div>
+<div><label>Duración</label><select id="min"><option value="0.5" selected>30 segundos (prueba)</option><option value="0.58">35 segundos (Short)</option><option value="1">1 minuto</option><option value="2">2 minutos</option><option value="5">5 minutos</option><option value="10">10 minutos</option><option value="15">15 minutos</option><option value="20">20 minutos</option></select></div>
 <div><label>Idioma</label><select id="lang"><option value="es-ES">Español</option><option value="en-US">English</option></select></div>
 </div>
 <div class="row">
@@ -68,10 +68,14 @@ small{color:var(--mut)}
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
 <label class="chk"><input id="pv" type="checkbox" checked> Preferir clips de vídeo cuando los haya</label>
 <label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
+<label class="chk"><input id="kar" type="checkbox" checked> Subtítulos karaoke (resalta la palabra que suena)</label>
 <label class="chk"><input id="chk" type="checkbox" checked> La IA (Gemini, Groq, Mistral) elige la mejor imagen/vídeo</label>
 <label class="chk"><input id="dir" type="checkbox" checked> 🎬 Director IA: revisa el montaje y cambia las escenas que no encajan</label>
 <label class="chk"><input id="map" type="checkbox" checked> 🗺 Mini-mapa del mundo en las escenas de lugares</label>
 <label>Estilo del guion</label><select id="sty"><option value="auto">🎯 Automático (la IA elige según tu tema)</option><option value="top">Top / ranking (cuenta atrás)</option><option value="animales">Naturaleza y animales</option><option value="espacio">Espacio y universo</option><option value="planeta">Planeta y lugares</option><option value="historia">Historia</option><option value="ciencia">Ciencia y tecnología</option><option value="biografia">Biografía</option><option value="clasico">Documental clásico (sereno)</option><option value="curiosidades">Curiosidades (dinámico)</option><option value="misterio">Misterio / true crime</option><option value="educativo">Educativo (claro)</option><option value="shorts">Shorts viral (rápido)</option></select>
+<details style="margin-top:10px"><summary>📐 Reglas del guion (tu prompt maestro)</summary><textarea id="rules" style="min-height:170px;font-size:12px"></textarea><button class="s" id="rulesReset" type="button">↺ Restaurar reglas por defecto</button><small>Se aplican al escribir el guion y luego se revisan una a una con un checklist PASA/FALLA. Se guardan en este navegador. Déjalo vacío para no usarlas.</small></details>
+<details style="margin-top:10px"><summary>🧪 Diagnóstico del dispositivo</summary><button class="s" id="diag" type="button">Comprobar WebCodecs en este móvil</button><small>Solo mira qué codificadores admite este navegador; no cambia nada.</small></details>
+<label class="chk"><input id="wiki" type="checkbox" checked> 📚 Usar Wikipedia como base de datos reales del guion</label>
 <label class="chk"><input id="rvw" type="checkbox"> Revisar y editar el guion antes de buscar imágenes</label>
 <button id="go">Generar</button>
 <div id="bar"><i></i></div>
@@ -217,7 +221,21 @@ async function makeImg(prompt,seed,soft){
 }
 
 // ---------- Stock libre ----------
-const art=m=>((m&&m.Artist&&m.Artist.value)||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim().slice(0,50)||'autor desconocido',isV=()=>$('fmt').value==='v',used=new Set(),ukey=u=>String(u).split('?')[0].replace('/thumb/','/').replace(/\/\d+px-[^/]+$/,''),pick=a=>a.filter(x=>!used.has(ukey(x.url))).slice(0,4),enc=encodeURIComponent;
+// Clips ya descargados: un mismo clip largo puede dar varias escenas, cada una con un tramo distinto
+const vclip={},tmo={},coolS={};
+const dropM=s=>{const m=s.m;if(!m||!m.uk)return;(s._rej=s._rej||new Set()).add(m.uk);const c=vclip[m.uk];if(c&&m.seg)c.segs=c.segs.filter(x=>x!==m.seg)};
+const mkClip=(blob,dur)=>({blob,dur,segs:[],room(){return this.dur-this.segs.reduce((a,x)=>a+(x[1]-x[0]),0)>=3}});
+const isUsed=u=>used.has(u)&&!(vclip[u]&&vclip[u].room());
+const scEst=s=>Math.max(3,Math.min(14,s.n.split(/\s+/).length/WPS()+.3+(s.p||0)));
+function pickStart(cl,dur,est,vs){ // elige el inicio del tramo: el que propone Gemini si está libre; si no, el primer hueco libre
+ const segs=cl?cl.segs:[];
+ if(dur<=est+.3)return segs.length?null:0;
+ const lim=Math.max(0,dur-est),c0=vs!=null&&isFinite(vs)?Math.max(0,Math.min(lim,vs)):0,
+ fit=c=>!segs.some(x=>c<x[1]-.2&&c+est>x[0]+.2);
+ for(const c of [c0,...segs.map(x=>x[1]),0,...segs.map(x=>x[0]-est)]){const cc=Math.max(0,Math.min(lim,c));if(fit(cc))return cc}
+ return null}
+const tsec=(t,k)=>{const m=String(t).match(new RegExp(k+'\\s*[:=]?\\s*\\**\\s*(\\d+)(?::(\\d{1,2}))?(?:[.,](\\d+))?','i'));if(!m)return null;return m[2]!=null?(+m[1])*60+(+m[2]):parseFloat(m[1]+(m[3]?'.'+m[3]:''))};
+const art=m=>((m&&m.Artist&&m.Artist.value)||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim().slice(0,50)||'autor desconocido',isV=()=>$('fmt').value==='v',used=new Set(),ukey=u=>String(u).split('?')[0].replace('/thumb/','/').replace(/\/\d+px-[^/]+$/,''),pick=a=>a.filter(x=>!isUsed(ukey(x.url))).slice(0,4),enc=encodeURIComponent;
 const STOCK=[
  {id:'wikipedia',w:1,f:async(q,s)=>{
   const ws=(q+' '+s.w).toLowerCase().split(/\s+/),sc=p=>ws.filter(w=>w.length>2&&p.title.toLowerCase().includes(w)).length,
@@ -317,11 +335,11 @@ const STOCK=[
 ];
 let deadV=0;
 async function gather(s,q){
- const L=STOCK.filter(p=>(!p.w||s.w)&&!deadS.has(p.id)&&(!p.key||keys[p.key]));
- const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|^nasa$/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
+ const L=STOCK.filter(p=>(!p.w||s.w)&&!deadS.has(p.id)&&!(coolS[p.id]>Date.now())&&(!p.key||keys[p.key]));
+ const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|^nasa$/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(/^429/.test(e.message)){coolS[p.id]=Date.now()+45000;log('⏳ '+p.id+': límite de uso, lo pauso 45 s')}else if(fatal(e.message))deadS.add(p.id);return[]}}));
  const vc=L.map((p,k)=>[p.id,rs[k].filter(c=>c.t==='vid').length]).filter(x=>/video|^nasa$/.test(x[0]));
  if($('pv').checked&&vc.length)log('🎞 clips para "'+q+'": '+vc.map(x=>x.join(' ')).join(', '));
- const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !used.has(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
+ const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !isUsed(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
 }
 const deadJ=new Set(),coolJ={},gate={},GAP={openai:1500,gemini:4500,groq:2500,mistral:1600,openrouter:3000,pollinations:3000},BADV=/whisper|guard|embed|tts|moderation|safeguard|ocr|transcribe/i;
 async function slot(id){const n=Date.now(),t=Math.max(n,gate[id]||0);gate[id]=t+(GAP[id]||0);if(t>n)await sleep(t-n)}
@@ -406,7 +424,11 @@ Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto c
 
 async function load(m){
  const b=await Promise.race([(await fj(m.url)).blob().then(x=>m.t==='vid'&&!/^video\//.test(x.type)?new Blob([x],{type:'video/mp4'}):x),sleep(30000).then(()=>{throw new Error('download timeout')})]);
- if(m.t==='vid'){
+ if(m.t==='vid')return vidFromBlob(b,m);
+ const im=await createImageBitmap(b);return{img:im,credit:m.credit,sal:sal(im,im.width,im.height)};
+}
+async function vidFromBlob(b,m){
+ {
   const v=document.createElement('video'),inf=()=>b.type+' '+Math.round(b.size/1e3)+'KB rs'+v.readyState+' n'+v.networkState;
   v.muted=v.playsInline=true;v.loop=false;v.preload='auto';v.setAttribute('playsinline','');v.setAttribute('muted','');
   v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';document.body.appendChild(v);
@@ -419,7 +441,6 @@ async function load(m){
    if(!fb){v.remove();throw new Error('video timeout '+inf())}
    log('ℹ vídeo pendiente ('+inf()+'): se cargará al pulsar ▶');return{v,credit:m.credit,lazy:1,fb,blob:b}}
   return{v,credit:m.credit,sal:sal(v,v.videoWidth,v.videoHeight),blob:b}}
- const im=await createImageBitmap(b);return{img:im,credit:m.credit,sal:sal(im,im.width,im.height)};
 }
 // ---------- Verificar el clip entero antes de aprobarlo ----------
 const jok=v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now());
@@ -436,7 +457,7 @@ async function frames(v){ // 4 fotogramas (10%, 35%, 65%, 90%) del clip, si el n
  return o}
 async function verifyClip(s,r){
  if(!$('chk').checked||s._r||!r.blob)return true;
- const P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas: 1) el sujeto principal debe ser el sujeto obligatorio (misma especie, lugar o época, no otra) durante la MAYOR PARTE del clip; si solo sale un instante o de fondo, no vale; 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe encajar con el tema de la locución: NO hace falta que se vea exactamente la acción que describe (es metraje de archivo), basta con que no la contradiga; 4) si el sujeto correcto se ve bien y es imagen real, APRUEBA; descarta solo ante un fallo claro. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una última línea "RESPUESTA: SI" o "RESPUESTA: NO".`,
+ const est=scEst(s),cl=r.cl,av=cl&&cl.segs.length?' Evita estos tramos del clip, ya usados en otras escenas (en segundos): '+cl.segs.map(x=>Math.round(x[0])+'-'+Math.round(x[1])).join(', ')+'.':'',P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas: 1) el sujeto principal debe ser el sujeto obligatorio (misma especie, lugar o época, no otra) durante la MAYOR PARTE del clip; si solo sale un instante o de fondo, no vale; 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe encajar con el tema de la locución: NO hace falta que se vea exactamente la acción que describe (es metraje de archivo), basta con que no la contradiga; 4) si el sujeto correcto se ve bien y es imagen real, APRUEBA; descarta solo ante un fallo claro. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una línea "RESPUESTA: SI" o "RESPUESTA: NO".${ent?` Si es SI, añade DEBAJO dos líneas más: "INICIO: n" con el segundo del clip (número) en el que empieza la mejor porción de ${Math.round(est)} segundos para esta locución (la que mejor muestra al sujeto obligatorio, sin cortes ni planos ajenos) y "CENTRO: n" con la posición horizontal del sujeto principal en esa porción, de 0 (izquierda) a 100 (derecha).${av}`:''}`,
  vd=tx=>{const m=String(tx).replace(/<think>[\s\S]*?<\/think>/g,'').match(/RESPUESTA\s*[:=]?\s*\**\s*(S[IÍ]|NO)/i);return m?/^S/i.test(m[1]):null};
  const nj=()=>!VJ.some(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id));
  if(!VJ.some(jok)&&!nj()){const w=Math.min(65000,Math.min(...VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)).map(v=>(coolJ[v.id]||0)-Date.now())));if(w>0){log('⏳ jueces en pausa: espero '+Math.ceil(w/1000)+' s');await sleep(w+300)}}
@@ -446,7 +467,7 @@ async function verifyClip(s,r){
   // 1) Gemini ve el clip entero y decide
   let gok=null;
   if(jok(VJ[0])&&r.blob.size<=14e6){
-   try{const t1=clean(await gv(P(1)));gok=vd(t1);log('👁 Gemini vio el clip entero ('+(VJ[0].last||'')+') → '+lab(gok)+' · '+t1.split('\n')[0].slice(0,140))}
+   try{const t1=clean(await gv(P(1)));gok=vd(t1);if(gok){const si=tsec(t1,'INICIO'),sc=tsec(t1,'CENTRO');if(si!=null)r.vs=si;if(sc!=null)r.fx=Math.max(0,Math.min(100,sc))/100}log('👁 Gemini vio el clip entero ('+(VJ[0].last||'')+') → '+lab(gok)+' · '+t1.split('\n')[0].slice(0,140))}
    catch(e){jfail(VJ[0],e)}
   }
   if(gok===false)return false;
@@ -488,6 +509,7 @@ function dh(src,sw,sh){try{const c=document.createElement('canvas');c.width=9;c.
 async function getMedia(s,k){
  const vm=$('vis').value;
  if(s.c)return{};
+ const est=scEst(s),okf=m=>{const u=ukey(m.url),c=vclip[u];return !isUsed(u)&&!(s._rej&&s._rej.has(u))&&!(c&&used.has(u)&&pickStart(c,c.dur,est,null)==null)},rej=u=>(s._rej=s._rej||new Set()).add(u);
  if(s._r||vm!=='ai')for(const q of [s.q,s.q2].filter(Boolean)){
   const all=await gather(s,q);if(!all.length)continue;
   const V=$('pv').checked?all.filter(c=>c.t==='vid'):[];
@@ -495,25 +517,43 @@ async function getMedia(s,k){
   for(const cs of(V.length?[V,all.filter(c=>c.t!=='vid')]:[all])){
    if(!cs.length)continue;
    const i=await rank(s,cs).catch(e=>{log('✗ juez: '+em(e));return null});if(i===-1){log('↺ ninguna encaja: '+q);continue}
-   for(const m of(i==null?cs:[cs[i],...cs.filter((_,j)=>j!==i)]).filter(m=>!used.has(ukey(m.url))).slice(0,3)){
-    try{if(used.has(ukey(m.url)))continue;used.add(ukey(m.url));if(m.t==='vid')log('⬇ probando clip: '+m.p);const r=await load(m);
-    if(m.t==='vid'){const ok=await verifyClip(s,r);delete r.blob;if(!ok){if(r.v)r.v.remove();log('✗ clip rechazado tras verlo: '+m.p);continue}}
-    const hh=r.img?dh(r.img,r.img.width,r.img.height):(r.v&&r.v.videoWidth?dh(r.v,r.v.videoWidth,r.v.videoHeight):null);
+   for(const m of(i==null?cs:[cs[i],...cs.filter((_,j)=>j!==i)]).filter(okf).slice(0,3)){
+    const uk=ukey(m.url);
+    try{if(!okf(m))continue;used.add(uk);const cl=vclip[uk];
+    if(m.t==='vid')log((cl?'♻ otro tramo de un clip ya usado: ':'⬇ probando clip: ')+m.p);
+    const r=cl?await vidFromBlob(cl.blob,m):await load(m);r.uk=uk;
+    if(m.t==='vid'){
+     if(!cl&&r.blob&&r.v&&isFinite(r.v.duration)&&r.v.duration>0)vclip[uk]=mkClip(r.blob,r.v.duration);
+     r.cl=vclip[uk];
+     const ok=await verifyClip(s,r);delete r.blob;delete r.cl;
+     if(!ok){if(r.v)r.v.remove();rej(uk);log('✗ clip rechazado tras verlo: '+m.p);continue}
+     if(r.v&&isFinite(r.v.duration)&&r.v.duration>0){
+      const st=pickStart(vclip[uk],r.v.duration,est,r.vs);
+      if(st==null){r.v.remove();rej(uk);log('✗ ese clip ya no tiene tramo libre');continue}
+      r.vs=st;r._seg=[st,Math.min(r.v.duration,st+est)];
+      log('✂ tramo del clip: desde el s '+Math.round(st*10)/10+(r.fx!=null?' · sujeto al '+Math.round(r.fx*100)+'% del ancho':''))}}
+    const hh=cl?null:(r.img?dh(r.img,r.img.width,r.img.height):(r.v&&r.v.videoWidth?dh(r.v,r.v.videoWidth,r.v.videoHeight):null));
     if(hh&&usedH.some(x=>hd(x,hh)<=9)){log('↺ casi idéntica a otra ya usada: la salto ('+m.p+')');if(r.v)r.v.remove();continue}
     if(hh)usedH.push(hh);
+    if(r._seg&&vclip[uk]){vclip[uk].segs.push(r._seg);r.seg=r._seg}delete r._seg;
     return r}
-    catch(e){log('✗ '+m.p+': '+em(e));if(m.t==='vid'&&/timeout/.test(e.message))deadS.add(m.p)}
+    catch(e){log('✗ '+m.p+': '+em(e));if(m.t==='vid'&&/timeout/.test(e.message)){tmo[m.p]=(tmo[m.p]||0)+1;if(tmo[m.p]>=3)deadS.add(m.p)}}
    }
   }
  }
  const im=await makeImg(s.i+', cinematic documentary still, muted film color grading, 35mm, natural light',k,!s._r);if(im)return{img:im};if(!s._r){s._r=1;return getMedia(s,k)}return{img:await makeImg('',k)};
 }
 
+
 // ---------- Voz natural ----------
 const ctx=new (window.AudioContext||window.webkitAudioContext)(),VO={el:['EXAVITQu4vr4xnSDxMaL','ErXwobaYiN019PkySvjV','pNInz6obpgDQGcFmaJgB','VR6AewLTigWG4xSOukaG','21m00Tcm4TlvDq8ikWAM','TxGEqnHWrfWFTfGW9XjX'],gm:['Kore','Charon','Algenib','Fenrir','Aoede','Puck'],pl:['nova','echo','onyx','fable','shimmer','alloy'],dgs:['aura-2-silvia-es','aura-2-javier-es','aura-2-nestor-es','aura-2-valerio-es','aura-2-diana-es','aura-2-aquila-es'],dge:['aura-2-thalia-en','aura-2-aries-en','aura-2-draco-en','aura-2-zeus-en','aura-2-athena-en','aura-2-apollo-en']};
+let noTs=0;
 const TTS=[
  {id:'deepgram',key:'deepgram',probe:1,f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://api.deepgram.com/v1/speak?encoding=mp3&model='+(($('lang').value==='es-ES'?VO.dgs:VO.dge)[v]),{method:'POST',headers:{Authorization:'Token '+keys.deepgram,'Content-Type':'application/json'},body:JSON.stringify({text:t})})).arrayBuffer())},
- {id:'elevenlabs',key:'elevenlabs',f:async(t,v,pt,nt)=>ctx.decodeAudioData(await(await fj('https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v]+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:'eleven_multilingual_v2',previous_text:pt||undefined,next_text:nt||undefined,voice_settings:{stability:.45,similarity_boost:.8,style:.35,use_speaker_boost:true}})})).arrayBuffer())},
+ {id:'elevenlabs',key:'elevenlabs',f:async(t,v,pt,nt)=>{const H={'xi-api-key':keys.elevenlabs,'Content-Type':'application/json'},B=JSON.stringify({text:t,model_id:'eleven_multilingual_v2',previous_text:pt||undefined,next_text:nt||undefined,voice_settings:{stability:.45,similarity_boost:.8,style:.35,use_speaker_boost:true}}),U='https://api.elevenlabs.io/v1/text-to-speech/'+VO.el[v];
+  // con tiempos reales por carácter (para subtítulos exactos); si falla, audio normal
+  if(!noTs)try{const j=await(await fj(U+'/with-timestamps?output_format=mp3_44100_128',{method:'POST',headers:H,body:B})).json(),bin=atob(j.audio_base64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const b=await ctx.decodeAudioData(u.buffer);if(j.alignment&&j.alignment.characters)b.al=j.alignment;return b}catch(e){if(/^(401|402|403|429)/.test(e.message))throw e;noTs=1;log('ℹ ElevenLabs: sin tiempos de palabra ('+em(e)+'); uso el audio normal')}
+  return ctx.decodeAudioData(await(await fj(U+'?output_format=mp3_44100_128',{method:'POST',headers:H,body:B})).arrayBuffer())}},
  {id:'gemini',key:'gemini',f:async(t,v)=>{
   const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v==0||v==4?'Di con tono sereno y cálido de narradora de documental: ':'Di con voz grave, pausada y envolvente de narrador de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
@@ -593,10 +633,10 @@ const STYN={top:'Top / ranking',animales:'Naturaleza y animales',espacio:'Espaci
 // am = volumen del sonido ambiente, tr = transiciones ('soft' solo fundidos suaves; 'mix' las que elija la IA; 'punchy' cortes y flashes)
 const PROF={
  clasico:{w:13,zm:1,gr:.06,vg:.45,am:1,tr:'mix'},
- animales:{w:16,zm:.8,gr:.05,vg:.35,am:1.5,tr:'soft'},
+ animales:{w:12,zm:.8,gr:.05,vg:.35,am:1.5,tr:'soft'},
  espacio:{w:16,zm:.7,gr:.04,vg:.6,am:.5,tr:'soft'},
- planeta:{w:15,zm:.85,gr:.05,vg:.4,am:1.3,tr:'soft'},
- historia:{w:15,zm:.8,gr:.1,vg:.6,am:1,tr:'soft'},
+ planeta:{w:12,zm:.85,gr:.05,vg:.4,am:1.3,tr:'soft'},
+ historia:{w:13,zm:.8,gr:.1,vg:.6,am:1,tr:'soft'},
  biografia:{w:14,zm:.8,gr:.08,vg:.5,am:1,tr:'soft'},
  ciencia:{w:13,zm:.9,gr:.03,vg:.3,am:.8,tr:'mix'},
  educativo:{w:13,zm:.8,gr:.03,vg:.3,am:.8,tr:'mix'},
@@ -606,6 +646,12 @@ const PROF={
  shorts:{w:8,zm:1.5,gr:.05,vg:.35,am:.8,tr:'punchy'}
 };
 const PF=()=>PROF[styV()]||PROF.clasico,zk=v=>1+(v-1)*PF().zm,TRP=t=>PF().tr==='soft'&&(t==='cut'||t==='flash')?'fade':t;
+async function wikiFacts(topic){
+ for(const lg of ($('lang').value==='es-ES'?['es','en']:['en','es'])){try{
+  const j=await(await fj('https://'+lg+'.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrlimit=3&gsrsearch='+enc(topic)+'&prop=extracts&exintro=1&explaintext=1&exlimit=3&exchars=1400')).json(),
+  ps=Object.values((j.query||{}).pages||{}).sort((a,b)=>a.index-b.index).filter(p=>p.extract&&p.extract.length>80);
+  if(ps.length)return ps.slice(0,3).map(p=>p.title+': '+p.extract.replace(/\s+/g,' ').replace(/\s*\|\s*/g,' ')).join(' | ')}catch(e){}}
+ return ''}
 async function pickSty(topic){
  if(/\btop\s*\d+|\b\d+\s+(mejores|peores|lugares|cosas|datos|curiosidades|animales|misterios|secretos|sitios)\b|\branking\b|\b(best|worst)\s+\d+|\b\d+\s+(best|worst|places|things|facts)\b/i.test(topic))return 'top';
  try{const r=(await llm('Clasifica el tema de un vídeo en UNA de estas categorías y responde solo con la clave, sin nada más: top (lista o ranking), animales (animales y naturaleza), espacio (astronomía, universo), planeta (lugares, países, geografía, viajes, fenómenos de la Tierra), historia, ciencia (ciencia y tecnología), biografia (vida de una persona), misterio (misterios, crímenes, desapariciones, paranormal), curiosidades (datos curiosos variados), educativo (explicar un concepto), clasico (documental general). Tema: "'+topic+'"')).toLowerCase().trim().split(/[^a-zñ]+/).filter(Boolean)[0];
@@ -614,15 +660,16 @@ async function pickSty(topic){
 
 const WPS=()=>+$('wps').value||2.6,INTRO=()=>$('intro').checked?3:0,TAIL=()=>$('outro').checked?5:0;
 $('intro').onchange=$('outro').onchange=()=>{if(playing||rc||!scenes.length||!scenes[0].m)return;relayout();pos=0;render(0)};
-$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="ncp" disabled>📋 Copiar narración</button><button class="s" id="ntx" disabled>💾 Guardar narración (.txt)</button><button class="s" id="nsr" disabled>💬 Guardar subtítulos con tiempos (.srt)</button><button class="s" id="cont" style="display:none">✅ Continuar con este guion</button><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button><label style="display:block;margin-top:10px">Cambiar una escena</label><select id="esc"></select><button class="s" id="esn" disabled>🔄 Buscar otra imagen o vídeo</button><label style="display:block;margin-top:6px">📷 O usa tu propia foto en esa escena</label><input id="esu" type="file" accept="image/*"><button class="s" id="mt" disabled>📝 Título, descripción y hashtags</button><textarea id="meta" readonly style="min-height:110px;font-size:12px"></textarea><button class="s" id="th" disabled>🖼 Crear miniatura</button><div id="thimg"></div>');
+$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="ncp" disabled>📋 Copiar narración</button><button class="s" id="ntx" disabled>💾 Guardar narración (.txt)</button><button class="s" id="nsr" disabled>💬 Guardar subtítulos con tiempos (.srt)</button><button class="s" id="cont" style="display:none">✅ Continuar con este guion</button><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button><label style="display:block;margin-top:10px">Cambiar una escena</label><select id="esc"></select><button class="s" id="esn" disabled>🔄 Buscar otra imagen o vídeo</button><label style="display:block;margin-top:6px">📷 O usa tu propia foto en esa escena</label><input id="esu" type="file" accept="image/*"><label style="display:block;margin-top:6px">🎞 O usa tu propio vídeo en esa escena (p. ej. de Storyblocks)</label><input id="esv" type="file" accept="video/*"><label style="display:block;margin-top:6px">Empezar tu vídeo en el segundo</label><input id="esvs" type="number" min="0" step="0.5" value="0"><button class="s" id="mt" disabled>📝 Título, descripción y hashtags</button><textarea id="meta" readonly style="min-height:110px;font-size:12px"></textarea><button class="s" id="th" disabled>🖼 Crear miniatura</button><div id="thimg"></div>');
 let contR=null;
 const STY={clasico:'Estilo documental clásico: tono sereno, pausado y majestuoso.',curiosidades:'Estilo curiosidades: dinámico, frases cortas y cada escena con un dato sorprendente.',misterio:'Estilo misterio / true crime: tono grave, suspense, pistas que se van revelando y un giro final.',educativo:'Estilo educativo: claro y ordenado, con ejemplos sencillos, de lo básico a lo complejo.',shorts:'Estilo Shorts viral: ritmo muy rápido, un gancho brutal en la primera frase y un cierre que invite a volver a verlo.',top:'Estilo TOP / ranking en cuenta atrás: respeta EXACTAMENTE el número de elementos que pide el tema (por ejemplo «top 7» son siete elementos), de mayor a menor número, dejando el número uno para el final como el mejor o más impactante. Planifica la lista completa desde el principio, mantenla igual en todas las tandas y no repitas elementos. Cada elemento ocupa varias escenas seguidas, más o menos el mismo número para todos: la primera lo presenta con su número y su nombre (solo esa escena lleva el cartel «item») y las siguientes dan datos concretos, historia y un detalle sorprendente. Tono dinámico, con ganchos entre elementos.',animales:'Estilo naturaleza y animales, al modo de los grandes documentales de naturaleza: tono de asombro y respeto, con comportamiento, hábitat, adaptaciones y relaciones entre especies. Usa el nombre común y, la primera vez, el científico. Las búsquedas de imagen deben nombrar la especie concreta y su entorno, y casi todas las escenas llevan en «a» el sonido real del animal o de su hábitat.',espacio:'Estilo espacio y universo: tono de asombro, escalas y comparaciones fáciles de imaginar (distancias, tiempos, tamaños), misiones y descubrimientos reales con sus nombres, y qué sabemos y qué sigue siendo un misterio. En el espacio no hay sonido: en «a» pon null salvo en escenas en la Tierra o dentro de una nave.',planeta:'Estilo planeta Tierra y lugares: geografía, clima, paisajes, culturas y lugares concretos con su nombre y su país; cada escena ancla un lugar o fenómeno real y lo describe con detalles visuales.',historia:'Estilo historia: relato cronológico claro con personajes, causas y consecuencias; las fechas se dicen con palabras y siempre situadas en su época, y se distinguen los hechos probados de las leyendas.',ciencia:'Estilo ciencia y tecnología: explica cómo funciona algo con analogías cotidianas, del problema a la solución, con ejemplos reales y sin jerga innecesaria.',biografia:'Estilo biografía: la vida de una persona en orden narrativo (origen, obstáculos, momentos decisivos y legado), con anécdotas verificables que la humanicen.'};
 $('cont').onclick=()=>contR&&contR();
-const credits=()=>{$('cred').value=[...new Set([...scenes.map(s=>s.m&&s.m.credit),...scenes.map(s=>s.ac),mAuto&&mCred?mCred:null].filter(Boolean))].join('\n')};
-const applyM=s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;relayout();credits();render(pos)};
-$('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{s._r=0;s.m=await getMedia(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
-$('esu').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{s.m={img:await createImageBitmap(f),credit:'Foto propia'};applyM(s);log('✓ Escena '+(i+1)+': tu foto')}catch(er){log('❌ No pude leer esa foto')}e.target.value=''};
-$('mt').onclick=async()=>{$('mt').disabled=true;try{$('meta').value=await llm('Para un vídeo documental sobre "'+title+'" en '+($('lang').value==='es-ES'?'español':'English')+', con este guion: '+scenes.map(s=>s.n).join(' ')+'\n\nDevuelve en texto plano: 1) TÍTULO atractivo (máximo 70 caracteres, sin clickbait falso), 2) DESCRIPCIÓN de 3 a 4 líneas con palabras clave, 3) 12 HASHTAGS, 4) 3 ideas de TEXTO PARA LA MINIATURA (máximo 4 palabras cada una).')+'\n\nCapítulos (pégalos en la descripción):\n'+scenes.filter((s,i)=>!i||(s.o&&(s.o.k==='item'||s.o.k==='title'))).map(s=>tf(s.st)+' '+(s.o&&s.o.t?(s.o.n?s.o.n+'. ':'')+s.o.t:'Intro')).join('\n')+'\n\nCréditos:\n'+$('cred').value}catch(e){log('❌ '+e.message)}$('mt').disabled=false};
+const credits=()=>{$('cred').value=[...new Set([...scenes.map(s=>s.m&&s.m.credit),...scenes.map(s=>s.ac),mAuto&&mCred?mCred:null].filter(x=>x&&!/^(Foto|Vídeo) propi/.test(x)))].join('\n')};
+const applyM=s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;relayout();if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}credits();render(pos)};
+$('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{dropM(s);s._r=0;s.m=await getMedia(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
+$('esu').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{const im=await createImageBitmap(f);dropM(s);s.m={img:im,credit:'Foto propia'};applyM(s);log('✓ Escena '+(i+1)+': tu foto')}catch(er){log('❌ No pude leer esa foto')}e.target.value=''};
+$('esv').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{log('Cargando tu vídeo…');const r=await vidFromBlob(f,{credit:'Vídeo propio'});r.vs=Math.max(0,+$('esvs').value||0);delete r.blob;dropM(s);s.m=r;applyM(s);log('✓ Escena '+(i+1)+': tu vídeo (desde el segundo '+r.vs+')')}catch(er){log('❌ No pude leer ese vídeo: '+em(er))}e.target.value=''};
+$('mt').onclick=async()=>{$('mt').disabled=true;try{$('meta').value=await llm('Para un vídeo documental sobre "'+title+'" en '+($('lang').value==='es-ES'?'español':'English')+', con este guion: '+scenes.map(s=>s.n).join(' ')+'\n\nDevuelve en texto plano: 1) TÍTULO atractivo (máximo 70 caracteres, sin clickbait falso; si el vídeo trata de un animal concreto, su nombre va como PRIMERA palabra del título), 2) DESCRIPCIÓN de 3 a 4 líneas con palabras clave, 3) 12 HASHTAGS'+(isV()?' (incluye #Shorts)':'')+', 4) 3 ideas de TEXTO PARA LA MINIATURA (máximo 4 palabras cada una).')+(isV()||DUR()<180?'':'\n\nCapítulos (pégalos en la descripción):\n'+scenes.filter((s,i)=>!i||(s.o&&(s.o.k==='item'||s.o.k==='title'))).map(s=>tf(s.st)+' '+(s.o&&s.o.t?(s.o.n?s.o.n+'. ':'')+s.o.t:'Intro')).join('\n'))+'\n\nCréditos:\n'+$('cred').value}catch(e){log('❌ '+e.message)}$('mt').disabled=false};
 $('th').onclick=async()=>{const sc=scenes.find(x=>x.img&&!x.v&&!x.c)||scenes.find(x=>!x.c);if(!sc)return;const keep=[$('sub').checked,$('lb').checked];$('sub').checked=$('lb').checked=false;try{render(sc.st+.2)}finally{$('sub').checked=keep[0];$('lb').checked=keep[1]}
  const c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');x.drawImage(cv,0,0,W,H);render(pos);const u=Math.min(W,H)/720,fs=(W>H?92:78)*u;
  x.font='900 '+fs+'px system-ui,-apple-system,sans-serif';x.textAlign='left';x.lineJoin='round';const ls=[];let l='';for(const w of title.toUpperCase().split(/\s+/)){if(l&&x.measureText(l+' '+w).width>W*.82){ls.push(l);l=w}else l=(l+' '+w).trim()}ls.push(l);
@@ -632,6 +679,20 @@ $('th').onclick=async()=>{const sc=scenes.find(x=>x.img&&!x.v&&!x.c)||scenes.fin
  $('thimg').innerHTML='<img style="width:100%;border-radius:8px;margin-top:8px" src="'+url+'"><button class="s" id="ths">💾 Guardar miniatura</button>';
  $('ths').onclick=async()=>{try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}const a=document.createElement('a');a.href=url;a.download=f.name;a.click()}};
 try{$('gui').value=localStorage.getItem('vidia_gui')||''}catch(_){}
+// Reglas del canal (prompt maestro v6 adaptado): son las de por defecto; editables y guardadas en el navegador.
+const RULES0=`1) HOOK: la primera frase rompe una expectativa (contradicción, negar un mito, escena ya en tensión, dato-cebo con pregunta concreta o comparación humana). Suena hablada y nombra el animal desde el primer segundo. No uses siempre el mismo tipo de hook.
+2) SIN RELLENO: cada dato sirve a la historia; si no hace avanzar la narrativa, fuera. Nunca inventes datos ni estadísticas.
+3) PROHIBIDAS las frases de plantilla de documental o de IA y toda la familia de muletillas que anuncian en vez de contar: «en las profundidades de», «imagina un mundo donde», «la naturaleza nos sorprende», «¿sabías que…?», «pero eso no es todo», «y aquí viene lo increíble», «pero espera, hay más», «hay un detalle que casi nadie conoce», «aquí es donde se pone interesante», «lo que viene te va a sorprender», «pocos saben esto», «esto es una locura», «es importante destacar», «cabe mencionar». Vale cualquier variante con la misma función. Tampoco expliques por qué un dato es impactante.
+4) VOZ HUMANA: frases cortas para golpear y largas para envolver, presente narrativo en las escenas de acción, algo de opinión o actitud, nada aséptico ni perfectamente equilibrado. Debe sonar a alguien contándotelo en un bar.
+5) CIERRE: corto y conectado con el hook. Termina SIEMPRE con la frase exacta «sígueme para más curiosidades», precedida de una premisa corta y variable ligada al dato («Si no sabías esto», «Si no lo sabías», «Si quieres aprender más»). Sin moraleja ni explicación antes.
+6) GATILLO DE COMENTARIOS, honesto y sin anunciarlo: usa al menos uno: gap de curiosidad con una pregunta concreta y contestable (el de por defecto), una tensión planteada y resuelta solo en parte, o «la mayoría cree X, quien trabaja con estos animales sabe que es al revés» (solo si es verdad). No prometas impacto.
+7) ESTRUCTURA DEL DATO CENTRAL: animal (conocido o no) → dato que rompe lo que se cree → por qué ocurre (mecanismo real) → consecuencia extrema y concreta. Ejemplo: loro → «su pico no deja de crecer en toda su vida» → es queratina, como las uñas → sin desgaste, no puede comer. En vídeos largos, bloques con mini-arco unidos por causa-efecto o contraste, nunca por «y además».`;
+try{const r=localStorage.getItem('vidia_rules');$('rules').value=r===null?RULES0:r}catch(_){$('rules').value=RULES0}
+$('rules').oninput=()=>{try{localStorage.setItem('vidia_rules',$('rules').value)}catch(_){}};
+$('rulesReset').onclick=()=>{$('rules').value=RULES0;try{localStorage.removeItem('vidia_rules')}catch(_){}};
+const RULES=()=>$('rules').value.trim();
+let FACTS='';
+const EXTRA=()=>(RULES()?' REGLAS OBLIGATORIAS DEL CANAL (se revisarán una a una al final): '+RULES().replace(/\s*\n\s*/g,' ')+' ':'')+(FACTS?' DATOS DE REFERENCIA de Wikipedia (úsalos como base y no los contradigas; si no corresponden al tema, ignóralos; no afirmes nada que no esté aquí ni sepas con certeza): '+FACTS+' ':'');
 const showGui=()=>{const t=scenes.map((s,i)=>(i+1)+'. '+s.n).join('\n');$('gui').value=title+'\n\n'+t;try{localStorage.setItem('vidia_gui',title+'\n\n'+t)}catch(_){}};
 const AMB={};
 async function getAmb(t){if(t in AMB)return AMB[t];AMB[t]=null;
@@ -657,19 +718,43 @@ function drawMap(s,T){const g=s.geo;if(!g||!WORLD||!$('map').checked)return;cons
  const m=P(g.lon,g.lat);if(m){const ph=(lt*1.6)%1;cx.fillStyle='rgba(255,70,70,.95)';cx.beginPath();cx.arc(m[0],m[1],5*u,0,7);cx.fill();cx.strokeStyle='rgba(255,70,70,'+(1-ph)+')';cx.lineWidth=2*u;cx.beginPath();cx.arc(m[0],m[1],(5+22*ph)*u,0,7);cx.stroke()}
  cx.restore();cx.beginPath();cx.arc(mx,my,R,0,7);cx.strokeStyle='#f5c542';cx.lineWidth=2.5*u;cx.stroke();
  cx.font='700 '+15*u+'px system-ui,sans-serif';cx.textAlign='center';cx.fillStyle='#fff';cx.fillText(g.name.slice(0,24),mx,my+R+20*u);cx.restore()}
-const thumb=src=>{const c=document.createElement('canvas'),k=Math.min(1,384/Math.max(src.width,src.height));c.width=src.width*k|0;c.height=src.height*k|0;c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.7).split(',')[1]};
-async function director(){const L=scenes.map((x,i)=>({s:x,i,src:x.m&&(x.m.img||x.m.fb)})).filter(x=>x.src&&!x.s.c).slice(0,32),bad=[];
- for(let b=0;b<L.length;b+=4){const part=L.slice(b,b+4),D=part.map(x=>thumb(x.src)),
-  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden. Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
-  for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(o&&o.ok===false&&part[o.i])bad.push({x:part[o.i],why:String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}}
+const thumb=src=>{const sw=src.videoWidth||src.width,sh=src.videoHeight||src.height,c=document.createElement('canvas'),k=Math.min(1,384/Math.max(sw,sh));c.width=sw*k|0;c.height=sh*k|0;c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.7).split(',')[1]};
+const seekTo=(v,t)=>new Promise(res=>{try{if(Math.abs(v.currentTime-t)<.05)return res();let d=0;const h=()=>{if(d)return;d=1;v.removeEventListener('seeked',h);res()};v.addEventListener('seeked',h);v.currentTime=t;setTimeout(h,2500)}catch(_){res()}});
+
+async function director(){const L=[];
+ for(let i=0;i<scenes.length&&!cancel;i++){const s=scenes[i],m=s.m;if(!m||s.c)continue;let d=null;
+  try{if(m.img||m.fb)d=thumb(m.img||m.fb);else if(m.v&&m.v.videoWidth){await seekTo(m.v,(m.vs||0)+Math.min(1.5,(m.v.duration||2)/4));if(m.v.readyState>=2)d=thumb(m.v)}}catch(_){}
+  if(d)L.push({s,i,d})}
+ const bad=[];
+ for(let b=0;b<L.length&&!cancel;b+=4){const part=L.slice(b,b+4),D=part.map(x=>x.d),
+  t='Eres director de edición de un documental sobre "'+title+'". Se te muestran '+part.length+' imágenes numeradas desde 0, en orden (algunas son un fotograma de un clip de vídeo). Locución de cada una: '+part.map((x,k)=>k+': "'+x.s.n+'" (sujeto: '+(x.s.w||x.s.q)+')').join('; ')+'. Marca ok=false solo en la imagen que claramente NO muestra el sujeto de su frase (otra especie, lugar o época), o que es casi idéntica a otra de esta lista, o de muy mala calidad. Devuelve SOLO un array JSON con un objeto por imagen: {"i":número,"ok":true o false,"why":"motivo breve"}.';
+  for(const v of VJ.filter(jok)){try{const r=parseArr(await ask(v,D.slice(0,v.max),t));r.forEach(o=>{if(o&&o.ok===false&&part[o.i])bad.push({x:part[o.i],why:String(o.why||'').slice(0,80)})});break}catch(e){jfail(v,e)}}
+  if(b%20===0)log('🎬 Director: revisadas '+Math.min(b+4,L.length)+' de '+L.length)}
  log('🎬 Director: '+(bad.length?bad.length+' escenas no encajan':'todo en orden'));
- for(const f of bad.slice(0,6)){if(cancel)break;log('🎬 escena '+(f.x.i+1)+': '+f.why+'; busco otra');try{f.x.s._r=0;f.x.s.m=await getMedia(f.x.s,f.x.i+Date.now()%1000)}catch(e){}}}
-function relayout(){let t=INTRO();scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});return t}
+ for(const f of bad.slice(0,Math.max(6,Math.ceil(L.length*.2)))){if(cancel)break;const s=f.x.s;log('🎬 escena '+(f.x.i+1)+': '+f.why+'; busco otra');try{dropM(s);s._r=0;s.m=await getMedia(s,f.x.i+Date.now()%1000)}catch(e){}}}
+
+function setRate(s){if(!s.v||!isFinite(s.v.duration)||s.v.duration<=0||!s.dur)return;const r=Math.max(.5,s.v.duration-(s.vs||0))/s.dur;s.v.playbackRate=Math.max(.8,Math.min(1,r));s.v.loop=r<.8}
+function relayout(){let t=INTRO();scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});return t}
 // ---------- Narración y subtítulos para ponerle la voz fuera de la app (CapCut, tu propia voz…) ----------
 const VSUG={top:'enérgica y ágil, ritmo algo rápido',animales:'cálida y pausada, tono de asombro',espacio:'grave y serena, muy pausada',planeta:'cálida y envolvente, ritmo medio',historia:'grave y solemne, ritmo pausado',biografia:'cercana y emotiva, ritmo medio',ciencia:'clara y amable, ritmo medio',educativo:'clara y amable, ritmo medio',misterio:'grave y baja, con pausas largas',curiosidades:'dinámica y expresiva, ritmo rápido',shorts:'muy enérgica y rápida',clasico:'grave y pausada, estilo documental'};
 const narr=()=>scenes.map(s=>s.n.trim());
 const stamp=(t,c)=>{t=Math.max(0,t);const p=(n,l=2)=>String(n).padStart(l,'0');return p(Math.floor(t/3600))+':'+p(Math.floor(t%3600/60))+':'+p(Math.floor(t%60))+c+p(Math.min(999,Math.round((t-Math.floor(t))*1000)),3)};
-function srt(){let k=1,o='';scenes.forEach(s=>{const sp=s.a?s.a.duration:s.n.split(/\s+/).length/WPS(),ch=chunks(s.n,44),tl=ch.join('').length||1;let t=s.st;ch.forEach(c=>{const d=sp*c.length/tl;o+=(k++)+'\n'+stamp(t,',')+' --> '+stamp(t+d,',')+'\n'+c+'\n\n';t+=d})});return o}
+// Zona realmente hablada de un audio (sin silencios de los extremos)
+function spanOf(b){if(b._sp)return b._sp;const d=b.getChannelData(0),sr=b.sampleRate;let a=0,z=d.length-1;while(a<d.length&&Math.abs(d[a])<.02)a+=8;while(z>a&&Math.abs(d[z])<.02)z-=8;a=Math.max(0,a/sr-.03);z=Math.min(b.duration,z/sr+.05);return b._sp=(z-a<.3?[0,b.duration]:[a,z])}
+// Trozos de subtítulo con tiempo (relativo al inicio de la escena). Con ElevenLabs los tiempos son reales por palabra;
+// con el resto de voces se reparten por la zona hablada del audio, dando más peso a las pausas de puntuación
+function subChunks(s,m){
+ const al=s.a&&s.a.al;let words=[];
+ if(al&&al.characters&&al.characters.length){let cur='',a0=0,a1=0;
+  al.characters.forEach((c,i)=>{if(/\s/.test(c)){if(cur){words.push({w:cur,a:a0,b:a1});cur=''}}else{if(!cur)a0=al.character_start_times_seconds[i];cur+=c;a1=al.character_end_times_seconds[i]}});
+  if(cur)words.push({w:cur,a:a0,b:a1})}
+ else{const ws=s.n.split(/\s+/).filter(Boolean),sp=s.a?spanOf(s.a):[0,Math.max(.5,ws.length/WPS())],wt=ws.map(w=>w.length+1+(/[,;:]$/.test(w)?3:/[.!?…]$/.test(w)?5:0)),tot=wt.reduce((x,y)=>x+y,0)||1;let c=sp[0];
+  ws.forEach((w,i)=>{const d=(sp[1]-sp[0])*wt[i]/tot;words.push({w,a:c,b:c+d});c+=d})}
+ const out=[];let cur=[];
+ for(const x of words){cur.push(x);const l=cur.map(y=>y.w).join(' ').length;if(l>=m||(l>=m*.5&&/[,.;:!?]$/.test(x.w))){out.push(cur);cur=[]}}
+ if(cur.length)out.push(cur);
+ return out.map(g=>({t:g.map(y=>y.w).join(' '),a:g[0].a,b:g[g.length-1].b,w:g}))}
+function srt(){let k=1,o='';scenes.forEach(s=>{const ch=subChunks(s,44);ch.forEach((c,j)=>{const a=s.st+c.a,b=Math.max(a+.3,j<ch.length-1?s.st+ch[j+1].a:s.st+c.b+.2);o+=(k++)+'\n'+stamp(a,',')+' --> '+stamp(b,',')+'\n'+c.t+'\n\n'})});return o}
 function narrTxt(){const sec=scenes.reduce((a,s)=>a+(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+.3+(s.p||0),0);return 'TÍTULO: '+title+'\nESTILO: '+(STYN[styV()]||styV())+'\nVOZ SUGERIDA: '+(VSUG[styV()]||VSUG.clasico)+'\nDURACIÓN APROXIMADA: '+Math.round(sec/6)/10+' min\n\n'+narr().join('\n\n')+'\n'}
 async function saveTxt(name,text){const b=new Blob([text],{type:'text/plain'}),f=new File([b],name,{type:'text/plain'});try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click()}
 $('ncp').onclick=async()=>{if(!scenes.length)return;const t=narr().join('\n\n');try{await navigator.clipboard.writeText(t);alert('Narración copiada ('+t.split(/\s+/).length+' palabras)')}catch(_){prompt('Copia la narración:',t)}};
@@ -681,13 +766,15 @@ $('rv').onclick=async()=>{if(!scenes.length||$('go').disabled)return;cancel=fals
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=topic.slice(0,60);cancel=false;ctx.resume();keepOn();
- $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);prog(0);
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS].forEach(o=>{for(const k in o)delete o[k]});prog(0);
   autoSty='';if($('sty').value==='auto'){autoSty=await pickSty(topic);log('🎯 Estilo elegido: '+STYN[autoSty])}
+  if(isV()||styV()==='shorts'){if($('intro').checked||$('outro').checked)log('✂ Formato corto: quito la intro y la pantalla final para que el gancho suene desde el segundo 0');$('intro').checked=$('outro').checked=false}
+  FACTS='';if($('wiki').checked){FACTS=await wikiFacts(topic.slice(0,120));log(FACTS?'📚 Base de datos de Wikipedia: '+FACTS.split(' | ').map(x=>x.split(': ')[0]).join(', '):'📚 Sin artículo de Wikipedia para este tema: el guion irá sin base de datos')}
  const total=Math.max(6,Math.round(+$('min').value*60/(PF().w/2.6))),L=$('lang').value==='es-ES'?'español':'English';
  try{
   for(let s=0;s<total;s+=10){
    const e=Math.min(s+10,total),n=e-s,last=scenes.length?scenes[scenes.length-1].n:'(inicio)';
-   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[styV()]} Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas ${PF().w} palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
+   const prompt=`Eres guionista de documentales. Tema: "${topic}". Idioma: ${L}. Voz en off natural y fluida, sin cifras ni abreviaturas (escribe los números con letras). ${STY[styV()]}${EXTRA()} Reglas: cada escena aporta una idea o dato NUEVO y concreto (nada de relleno ni frases como «en este vídeo»); no repitas ideas ni palabras de escenas anteriores; alterna frases cortas y largas; cuenta una historia con arco (planteamiento, desarrollo, giro, cierre), no una lista; no inventes datos: si no estás seguro, no lo afirmes. Escenas ${s+1} a ${e} de ${total}. La escena anterior terminó: "${last}". ${s===0?'Empieza con un gancho fuerte.':''} ${e===total?'Cierra con una conclusión.':'No concluyas todavía.'} Devuelve SOLO un array JSON de ${n} objetos con las claves "n" (UNA sola frase corta de unas ${PF().w} palabras), "q" (búsqueda de foto o video: 2 a 4 palabras en inglés que muestren LITERALMENTE lo que dice la narración de ESA escena, con el nombre propio concreto si lo hay; nada genérico: incluye siempre el lugar o animal del tema, por ejemplo "Serengeti storm clouds" y nunca solo "heavy rain"), "q2" (búsqueda alternativa más amplia, en inglés, que SÍ exista como metraje de archivo: sujeto más algo simple y visible como walking, resting, flying, close up o landscape; nunca acciones difíciles de filmar como cazando, peleando o rituales), "w" (título exacto del artículo de Wikipedia en inglés del lugar, persona, objeto o hecho principal de la escena, o null si no hay uno claro), "i" (prompt detallado en inglés para generar una imagen, sin texto), "t" ("wiki" si "w" tiene fotos reales fiables, "stock" para imágenes de ambiente o genéricas; nunca "ai", las imágenes de IA solo se usan si no aparece nada real) y "c" (solo si la escena presenta datos numéricos reales: {"t":"título corto","k":"bar" o "line","l":[etiquetas],"v":[números]}; si no, null), "o" (texto en pantalla, o null si no hace falta: {"k":"item" cuando la escena presenta un elemento de una lista o ranking (en "n" su número tal como lo verá el espectador y en "t" el nombre corto, máximo 4 palabras), "title" para el título del vídeo o un cambio de capítulo, "stat" para una cifra o dato clave; "t": texto corto; "s": subtítulo opcional de máximo 6 palabras}. Si el vídeo es un top o una lista, TODAS las escenas que presentan un elemento llevan "item" con su número correcto y consecutivo. La escena número 1 (solo si está en esta tanda) lleva siempre "title" con el título del vídeo. El resto de escenas, null salvo que aporten algo), "p" (pausa dramática en segundos tras la frase, de 0 a 1.2: usa 0.6 a 1 tras el gancho, antes de una revelación y entre elementos de una lista; 0 en el resto) y "tr" (transición de entrada: "fade" normal, "dip" para cambio de capítulo o de elemento de lista, "flash" para impacto o sorpresa, "cut" para ritmo rápido), "a" (sonido ambiente real de esa escena: búsqueda en inglés de 2 a 4 palabras, por ejemplo "savanna wind birds", "lion roar", "ocean waves", "city street crowd"; null si no aplica; nunca música) y "g" (true solo si la escena presenta por primera vez un lugar geográfico concreto, como ciudad, monumento, país o región, y "w" es el artículo de ese lugar; si no, false). Sin markdown.`;
    let arr;for(let t=0;t<3&&!arr;t++){try{arr=parseArr(await llm(prompt))}catch(er){log('reintentando guion…')}}
    if(!arr)throw new Error('No se pudo obtener el guion');
    arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null,
@@ -695,7 +782,10 @@ $('go').onclick=async()=>{
     amb:o.a&&o.a!=='null'?String(o.a).slice(0,40):'',g:o.g===true&&!!o.w&&o.w!=='null',p:Math.min(1.2,Math.max(0,+o.p||0)),tr:TRP(['fade','cut','dip','flash'].includes(o.tr)?o.tr:'fade')})});
    prog(0.2*e/total);
   }
-  if(scenes.length>=6&&!cancel){try{const N=scenes.length,r=parseArr(await llm(`Eres editor de guiones de documentales. Este es el guion de una voz en off, un array JSON de ${N} frases, cada una asociada a su escena visual. Mejóralo: quita repeticiones de ideas y de palabras, añade uno o dos ganchos de retención a mitad (del tipo «pero lo más sorprendente viene ahora», reformulados), haz que cada frase suene natural dicha en voz alta y suaviza o elimina cualquier dato del que no estés seguro. Mantén EXACTAMENTE ${N} frases, en el mismo orden y con el mismo tema cada una (las que presentan un elemento de una lista conservan su número y su nombre), en ${L}, sin cifras ni abreviaturas. Devuelve SOLO el array JSON de ${N} strings.\n\n`+JSON.stringify(scenes.map(s=>s.n))));if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)){r.forEach((x,i)=>scenes[i].n=x);log('✎ guion pulido en una segunda pasada')}}catch(e){log('ℹ segunda pasada del guion omitida')}}
+  if(scenes.length>=6&&!cancel){try{const N=scenes.length,R=RULES(),raw=await llm(`Eres editor de guiones de documentales. Este es el guion de una voz en off, un array JSON de ${N} frases, cada una asociada a su escena visual. Mejóralo: quita repeticiones de ideas y de palabras, si la parte central se siente plana, reordénala para que cada frase cree la tensión de la siguiente, sin anunciar que viene algo interesante, haz que cada frase suene natural dicha en voz alta y suaviza o elimina cualquier dato del que no estés seguro. Mantén EXACTAMENTE ${N} frases, en el mismo orden y con el mismo tema cada una (las que presentan un elemento de una lista conservan su número y su nombre), en ${L}, sin cifras ni abreviaturas.${R?'\n\nREGLAS DEL CANAL:\n'+R+'\n\nHaz un checklist: para CADA regla indica PASA o FALLA (con un motivo corto) sobre el guion original y reescribe lo que FALLE para que la cumpla.':''}${FACTS?'\n\nDATOS DE REFERENCIA (Wikipedia): '+FACTS+'\nCorrige o elimina cualquier dato que los contradiga.':''}\n\nDevuelve SOLO un objeto JSON {"checklist":[{"regla":"texto corto","r":"PASA" o "FALLA","nota":"motivo breve"}],"guion":[${N} strings]}.\n\nGUION:\n`+JSON.stringify(scenes.map(s=>s.n)));
+   let r=null,ck=[];try{const o=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));r=o.guion;ck=Array.isArray(o.checklist)?o.checklist:[]}catch(_){}
+   if(!Array.isArray(r)){try{r=parseArr(raw)}catch(_){}}
+   if(Array.isArray(r)&&r.length===N&&r.every(x=>typeof x==='string'&&x.length>3)){r.forEach((x,i)=>scenes[i].n=x);ck.slice(0,10).forEach(c=>log((/FALL/i.test(c&&c.r)?'✗ FALLA (corregido)':'✓ PASA')+' · '+String((c&&c.regla)||'').slice(0,70)+(c&&c.nota?' — '+String(c.nota).slice(0,90):'')));log('✎ guion revisado en una segunda pasada')}}catch(e){log('ℹ segunda pasada del guion omitida')}}
   showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»).`);
   if($('rvw').checked){$('gui').readOnly=false;$('cont').style.display='block';$('gui').scrollIntoView({block:'center'});log('✏ Edita el guion si quieres (una escena por línea numerada) y pulsa «Continuar con este guion».');await new Promise(r=>contR=r);contR=null;$('cont').style.display='none';$('gui').readOnly=true;if(cancel)throw new Error('Cancelado');
    $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1])scenes[m[1]-1].n=m[2].trim()});showGui()}
@@ -715,8 +805,8 @@ $('go').onclick=async()=>{
   if(!music&&$('amb').checked){
    try{log('🎵 buscando música libre…');const est=scenes.reduce((a,s)=>a+(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+.3+(s.p||0),0),rm=await getMusic(styV(),est);if(rm){music=rm.b;mAuto=mReal=true;mCred=rm.credit;log('🎵 música real: '+rm.credit)}}catch(e){log('✗ música real: '+em(e))}
    if(!music){try{music=await synthMusic([...topic].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)>>>0,styV());mAuto=true;mReal=false;log('🎵 no encontré música libre: uso música generada')}catch(e){log('✗ música: '+em(e))}}}
-  let t=INTRO();scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
-  credits();
+  let t=INTRO();scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});
+  scenes.forEach(s=>{if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}});credits();
   $('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));$('esn').disabled=$('mt').disabled=$('th').disabled=false;$('ncp').disabled=$('ntx').disabled=$('nsr').disabled=false;
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;pos=0;render(0);
@@ -730,7 +820,7 @@ const DUR=()=>{const l=scenes[scenes.length-1];return l&&l.dur?l.st+l.dur+.5+TAI
 function ui(T){if(drag)return;const d=DUR();$('sk').value=d?T/d*1000:0;$('tm').textContent=tf(T)+' / '+tf(d)}
 function chunks(t,m){const o=[];let l='';for(const w of t.split(/\s+/)){l=l?l+' '+w:w;if(l.length>=m||(l.length>=m*.5&&/[,.;:!?]$/.test(w))){o.push(l);l=''}}if(l)o.push(l);return o}
 function setFmt(){const v=isV();W=v?720:1280;H=v?1280:720;K=+$('res').value||1;cv.width=Math.round(W*K);cv.height=Math.round(H*K);cv.style.maxWidth=v?'340px':'none';cv.style.margin='0 auto'}
-$('fmt').onchange=()=>{setFmt();if(scenes.length&&scenes[0].m)render(0)};
+$('fmt').onchange=()=>{setFmt();if(isV())$('intro').checked=$('outro').checked=false;if(scenes.length&&scenes[0].m){if(!playing&&!rc)relayout();render(0)}};
 $('res').onchange=()=>{if(playing||rc){$('res').value=String(K);return}setFmt();if(scenes.length&&scenes[0].m)render(pos)};
 $('fit').onchange=()=>{if(scenes.length&&scenes[0].m&&!playing)render(pos)};
 setFmt();
@@ -773,7 +863,7 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const land=W>H,md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=land?0:md===2?(.5-t)*50:md===3?(t-.5)*50:0; // horizontal: recorte centrado simple, sin recorte inteligente ni desplazamiento lateral
  const b0=Math.max(W/sw,H/sh),vf=Math.min(W/(sw*b0),H/(sh*b0)),ft=$('fit').value;
- if(Math.abs(Math.log((sw/sh)/(W/H)))>.08&&(ft==='blur'||(ft==='auto'&&vf<.6))){
+ if(Math.abs(Math.log((sw/sh)/(W/H)))>.08&&(ft==='blur'||(ft==='auto'&&vf<(s.v&&s.fx!=null?.3:.6)))){
   // imagen completa, con fondo desenfocado (sin ctx.filter: no va en Safari)
   const bw=48,bh=Math.max(8,Math.round(bw*H/W)),bb=Math.max(bw/sw,bh/sh);bgc.width=bw;bgc.height=bh;
   bgc.getContext('2d').drawImage(src,(bw-sw*bb)/2,(bh-sh*bb)/2,sw*bb,sh*bb);
@@ -782,7 +872,8 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const nS=Math.max(1,Math.round(s.dur/3.4)),kS=Math.min(nS-1,Math.floor(t*nS)),tS=t*nS-kS,zs=[[1,1.1],[1.25,1.15],[1.12,1.26],[1.3,1.18]][(i+kS)%4],zc=zk(s.v?[1.04,1.2,1.08,1.28][kS%4]*(1+.03*tS):zs[0]+(zs[1]-zs[0])*tS),fx=(land||s.v)?.5:[.5,.35,.65,.5][(i+kS)%4],fy=[.5,.42,.5,.45][(i+kS)%4];
  const b=Math.max(W/sw,H/sh),w=sw*b*zc,h=sh*b*zc,cl=(v,m)=>Math.min(0,Math.max(m,v));
  let x=(W-w)*fx+px,y=(H-h)*fy;
- if(s.sal&&!land){
+ if(!land&&s.v&&s.fx!=null&&w>W+2)x=cl(W/2-s.fx*w,W-w);
+ else if(s.sal&&!land){
   const dr=s.v?0:(t-.5)*(md%2?-1:1);
   if(w>W+2){x=cl(W/2-bestWin(s.sal.col,W/w)*w,W-w);x=cl(x+dr*Math.min((w-W)*.15,120),W-w)}
   else if(h>H+2){y=cl(H/2-bestWin(s.sal.row,H/h)*h,H-h);y=cl(y+dr*Math.min((h-H)*.15,120),H-h)}
@@ -838,9 +929,13 @@ function render(T){ui(T);cx.setTransform(K,0,0,K,0,0);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
  drawIntro(T);drawEnd(T);
  if(cur){if(!(INTRO()&&cur===scenes[0]&&cur.o&&cur.o.k==='title'))drawOv(cur,T);drawMap(cur,T)}
- if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.3,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,styV()==='shorts'?16:isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
-  const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(c,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
-  cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l,W/2,y0+k*lh))}
+ if($('sub').checked&&cur){const m=styV()==='shorts'?16:isV()?24:44,key=m+'|'+WPS()+'|'+(cur.a?cur.a.duration:0)+'|'+cur.n.length;if(cur._sck!==key){cur._sc=subChunks(cur,m);cur._sck=key}
+  const lt=T-cur.st;let g=cur._sc[0];for(const x of cur._sc)if(x.a<=lt)g=x;
+  if(g){const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(g.t,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
+   cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);
+   // karaoke: la palabra que suena en amarillo
+   const kar=$('kar').checked&&g.w.length>1;let wi=0;cx.textAlign='left';
+   ls.forEach((l,k)=>{let x=W/2-cx.measureText(l).width/2;l.split(' ').filter(Boolean).forEach(w=>{const o=g.w[wi++],on=kar&&o&&lt>=o.a&&lt<o.b+.05;cx.fillStyle=on?'#f5c542':'#fff';cx.fillText(w,x,y0+k*lh);x+=cx.measureText(w+' ').width})});cx.textAlign='center'}}
  if($('lb').checked&&W>H){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
  if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
 }
@@ -849,10 +944,12 @@ async function prime(){
  L.forEach(s=>{s.v.play().then(()=>s.v.pause()).catch(()=>{})});
  await Promise.all(L.map(async s=>{
   for(let k=0;k<30&&!s.v.videoWidth;k++)await sleep(150);
-  if(s.v.videoWidth){s.sal=sal(s.v,s.v.videoWidth,s.v.videoHeight);if(isFinite(s.v.duration)&&s.v.duration>0&&s.dur)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))}
+  if(s.v.videoWidth){s.sal=sal(s.v,s.v.videoWidth,s.v.videoHeight);setRate(s)}
   else{s.v.remove();s.v=null;s.img=s.fb;s.sal=sal(s.fb,s.fb.width,s.fb.height);log('⚠ un vídeo no cargó en este móvil; uso su miniatura')}
   s.lazy=0}));
 }
+// Iguala el volumen de cada frase de voz (cada escena se sintetiza por separado y puede sonar más baja o más alta)
+function vgain(b){if(b._g)return b._g;const d=b.getChannelData(0);let q=0,n=0;for(let i=0;i<d.length;i+=4){const x=d[i];if(Math.abs(x)>.02){q+=x*x;n++}}const r=n>200?Math.sqrt(q/n):0;return b._g=r>.01?Math.max(.6,Math.min(2.2,.14/r)):1}
 async function run(rec,from=0){
  stopF=paused=false;playing=true;rc=rec;pl();const pp=prime();try{navigator.audioSession.type='playback'}catch(_){}
  await pp;
@@ -860,9 +957,9 @@ async function run(rec,from=0){
  if(!rec){au.srcObject=dest.stream;ok=await Promise.race([au.play().then(()=>true,()=>false),sleep(1500).then(()=>true)])}
  await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5+TAIL();
  const vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
- const mc=ctx.createDynamicsCompressor();mc.threshold.value=-20;mc.knee.value=20;mc.ratio.value=3;mc.attack.value=.01;mc.release.value=.3;vg.connect(mc);mc.connect(dest);if(!rec&&!ok)mc.connect(ctx.destination);
+ const mc=ctx.createDynamicsCompressor();mc.threshold.value=-20;mc.knee.value=20;mc.ratio.value=3;mc.attack.value=.01;mc.release.value=.3;const lm=ctx.createDynamicsCompressor();lm.threshold.value=-2;lm.knee.value=0;lm.ratio.value=20;lm.attack.value=.002;lm.release.value=.1;vg.connect(mc);mc.connect(lm);lm.connect(dest);if(!rec&&!ok)lm.connect(ctx.destination);
  const vh=ctx.createBiquadFilter(),vk=ctx.createBiquadFilter();vh.type='highpass';vh.frequency.value=75;vk.type='peaking';vk.frequency.value=3200;vk.Q.value=.9;vk.gain.value=2.5;vh.connect(vk);vk.connect(vg);
- scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vh);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
+ scenes.forEach(s=>{if(s.v)s.v.currentTime=s.vs||0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;const gn=ctx.createGain();gn.gain.value=vgain(s.a);n.connect(gn);gn.connect(vh);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
  if($('amb').checked){const nb=ctx.createBuffer(1,ctx.sampleRate*1.3|0,ctx.sampleRate),nd=nb.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
   scenes.forEach((s,i)=>{if(i&&s.tr==='cut')return;const t=s.st-(i&&s.tr!=='flash'?X:0)-from;if(t<0)return;const at=t0+t;
    if(s.o){const ts=t0+s.st+ovT(s)-from;if(ts>t0-.1){const o=ctx.createOscillator(),og=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(880,ts);o.frequency.exponentialRampToValueAtTime(520,ts+.14);og.gain.setValueAtTime(.0001,ts);og.gain.linearRampToValueAtTime(.07,ts+.01);og.gain.exponentialRampToValueAtTime(.0001,ts+.2);o.connect(og);og.connect(vg);o.start(ts);o.stop(ts+.25);srcs.push(o)}}
@@ -892,6 +989,18 @@ $('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textCont
 $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
 $('rec').onclick=()=>{log('Grabando… dura lo mismo que el video.');run(true).then(()=>log('Grabación terminada: pulsa «Guardar vídeo» debajo del botón de exportar.'))};
 $('stop').onclick=()=>{keepOff();contR&&contR();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
+
+$('diag').onclick=async()=>{
+ const r=[];
+ const t=async(n,f)=>{try{r.push(n+': '+await f())}catch(e){r.push(n+': error '+(e&&e.message||e))}};
+ await t('AudioEncoder AAC',async()=>typeof AudioEncoder==='undefined'?'NO existe':(await AudioEncoder.isConfigSupported({codec:'mp4a.40.2',sampleRate:48000,numberOfChannels:2,bitrate:128000})).supported?'SI':'NO');
+ await t('AudioEncoder Opus',async()=>typeof AudioEncoder==='undefined'?'NO existe':(await AudioEncoder.isConfigSupported({codec:'opus',sampleRate:48000,numberOfChannels:2,bitrate:128000})).supported?'SI':'NO');
+ await t('VideoEncoder H.264 vertical 1080x1920',async()=>typeof VideoEncoder==='undefined'?'NO existe':(await VideoEncoder.isConfigSupported({codec:'avc1.640032',width:1080,height:1920,bitrate:5e6,framerate:30})).supported?'SI':'NO');
+ await t('VideoEncoder H.264 horizontal 1920x1080',async()=>typeof VideoEncoder==='undefined'?'NO existe':(await VideoEncoder.isConfigSupported({codec:'avc1.640032',width:1920,height:1080,bitrate:5e6,framerate:30})).supported?'SI':'NO');
+ await t('Almacenamiento de archivos (OPFS)',async()=>navigator.storage&&navigator.storage.getDirectory?(await navigator.storage.getDirectory(),'SI'):'NO');
+ r.push('Navegador: '+navigator.userAgent);
+ alert(r.join('\n'));
+};
 </script>
 </body>
 </html>
