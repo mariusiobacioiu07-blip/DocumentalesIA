@@ -199,7 +199,7 @@ const STOCK=[
   const j=await(await fj('https://api.pexels.com/v1/search?per_page=6&orientation='+(isV()?'portrait':'landscape')+'&query='+enc(q),{headers:{Authorization:keys.pexels}})).json();
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,prev:p.src.medium,credit:'Pexels – '+p.photographer}))):null}},
  {id:'pixabay-video',key:'pixabay',f:async q=>{
-  const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&q=`+enc(q))).json();
+  const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&video_type=film&q=`+enc(q))).json();
   const a=j.hits.map(h=>{const f=h.videos.small||h.videos.medium;return f&&f.url&&{t:'vid',url:f.url,prev:(h.videos.medium||h.videos.small||h.videos.tiny||{}).thumbnail,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
@@ -223,14 +223,14 @@ const STOCK=[
    return u&&{t:'vid',url:u.replace(/^http:/,'https:'),prev:th&&th.href,credit:'NASA – '+(x.data[0].title||'').slice(0,50)}}catch(_){return null}}))).filter(Boolean);
   return a.length?pick(a):null}},
  {id:'openverse',f:async q=>{
-  const j=await(await fj('https://api.openverse.org/v1/images/?page_size=10&license_type=commercial,modification&q='+enc(q))).json();
+  const j=await(await fj('https://api.openverse.org/v1/images/?page_size=10&license_type=commercial,modification&category=photograph&q='+enc(q))).json();
   const a=(j.results||[]).filter(r=>r.thumbnail&&!/gif|svg/i.test(r.filetype||'')).map(r=>({t:'img',url:r.thumbnail,credit:'Openverse – '+(r.creator||'?')+' ('+(r.license||'').toUpperCase()+' '+(r.license_version||'')+')'}));
   return a.length?pick(a):null}}
 ];
 let deadV=0;
 async function gather(s,q){
  const L=STOCK.filter(p=>(!p.w||s.w)&&!deadS.has(p.id)&&(!p.key||keys[p.key]));
- const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
+ const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,/video|nasa/.test(p.id)||p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
  const vc=L.map((p,k)=>[p.id,rs[k].filter(c=>c.t==='vid').length]).filter(x=>/video|nasa/.test(x[0]));
  if($('pv').checked&&vc.length)log('🎞 clips para "'+q+'": '+vc.map(x=>x.join(' ')).join(', '));
  const seen=new Set(),o=rs.flat().filter(c=>{if(!c.url)return false;const u=ukey(c.url);return !used.has(u)&&!seen.has(u)&&seen.add(u)});return o.slice(0,14);
@@ -249,11 +249,11 @@ let gJ;
 async function gjModels(){ // todos los modelos Gemini con visión disponibles: flash y lite primero (más cuota), luego pro
  if(gJ)return gJ;
  try{const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),v=n=>parseFloat((n.match(/gemini-([\d.]+)/)||[0,0])[1]);
-  gJ=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-(flash|pro)/.test(m.name)&&!/tts|image|embed|audio|live|native|robotics|computer|thinking/i.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>(/pro/.test(a)-/pro/.test(b))||(/lite/.test(b)-/lite/.test(a))||v(b)-v(a)).slice(0,10)}catch(_){}
+  gJ=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-(flash|pro)/.test(m.name)&&!/tts|image|embed|audio|live|native|robotics|computer|thinking/i.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>{const c=n=>/lite/.test(n)?2:/pro/.test(n)?1:0;return c(a)-c(b)||v(b)-v(a)}).slice(0,10)}catch(_){}
  if(!gJ||!gJ.length)gJ=[...await models(LLMS[0])];
  return gJ;
 }
-async function ask(v,D,t){
+async function ask(v,D,t,vid){
  await slot(v.id);
  if(v.id==='gemini'){
   let er;
@@ -280,7 +280,7 @@ async function ask(v,D,t){
  for(const m of v.ms){
   for(const x of (v.mt?[{reasoning_effort:'none'},{}]:[{}])){
    try{
-    const j=await(await fj(v.url,{method:'POST',headers:h,body:JSON.stringify({model:m,temperature:0,max_tokens:v.mt||8,...x,messages:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'text',text:'Imagen '+i+':'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+d}}]),{type:'text',text:t}]}]})})).json();
+    const j=await(await fj(v.url,{method:'POST',headers:h,body:JSON.stringify({model:m,temperature:0,max_tokens:v.mt||600,...x,messages:[{role:'user',content:[...(vid?[{type:'video_url',video_url:{url:vid}}]:D.flatMap((d,i)=>[{type:'text',text:'Imagen '+i+':'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+d}}])),{type:'text',text:t}]}]})})).json();
     v.last=m;return j.choices[0].message.content;
    }catch(e){er=e;if(!/^(404|400|422|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
@@ -294,9 +294,12 @@ async function rank(s,cs){
  bm.forEach((b,i)=>{if(!b)return;const cv=document.createElement('canvas');cv.width=384;cv.height=Math.round(384*b.height/b.width);cv.getContext('2d').drawImage(b,0,0,cv.width,cv.height);th.push({i,d:cv.toDataURL('image/jpeg',.7).split(',')[1]})});
  if(!th.length)return null;
  for(const v of J){
-  const sub=th.slice(0,v.max),t=`Documental sobre "${title}". Locución de esta escena: "${s.n}". Se te muestran ${sub.length} imágenes numeradas desde 0. Elige la que mejor ilustra EXACTAMENTE lo que dice la locución y encaja con el tema (lugar, animales, época, clima), con buena calidad y sin texto ni marcas de agua.${$('pv').checked&&sub.some(x=>cs[x.i].t==='vid')?' Las imágenes '+sub.map((x,k)=>cs[x.i].t==='vid'?k:-1).filter(k=>k>=0).join(', ')+' son el primer fotograma de clips de vídeo: si un clip encaja casi igual de bien que una foto, prefiere el clip.':''}${isV()?' El vídeo es VERTICAL 9:16 y se verá un recorte vertical: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''} Si ninguna encaja bien responde -1. Responde solo con el número.`;
+  const sub=th.slice(0,v.max),vids=sub.map((x,k)=>cs[x.i].t==='vid'?k:-1).filter(k=>k>=0),
+  t=`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Se te muestran ${sub.length} imágenes numeradas desde 0.${vids.length?' Las imágenes '+vids.join(', ')+' son el primer fotograma de clips de vídeo (a igualdad de calidad, prefiere un clip).':''}${isV()?' El vídeo es VERTICAL 9:16: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''}
+Reglas estrictas: 1) Solo vale si el sujeto principal es EXACTAMENTE el sujeto obligatorio (misma especie, lugar o época), no uno parecido ni de otra especie. 2) Rechaza dibujos, ilustraciones, animaciones, dibujos animados, renders 3D, juguetes, collages, imágenes con texto o marcas de agua y las de baja calidad. 3) Debe ser coherente con lo que dice la locución (si habla de cazar en grupo o de comer, debe verse esa acción o el grupo; un animal de la especie correcta sin esa acción solo sirve si es lo mejor disponible). 4) Ante la duda, descarta.
+Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto correcto? sí/no". Termina con una última línea "RESPUESTA: n" con el número de la mejor imagen que cumpla TODAS las reglas, o "RESPUESTA: -1" si ninguna.`;
   try{
-   const n=parseInt(String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,'').match(/-?\d+/)[0]);
+   const tx=String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,''),rm=tx.match(/RESPUESTA\s*[:=]?\s*\**\s*(-?\d+)/i),n=parseInt(rm?rm[1]:tx.match(/-?\d+/g).pop());
    log('✓ juez '+v.id+(v.last?' ('+v.last+')':'')+' → '+(n<0?'ninguna encaja':'imagen '+n));
    if(n<0)return -1;if(sub[n])return sub[n].i;
   }catch(e){
@@ -321,10 +324,69 @@ async function load(m){
    // iOS no carga el <video> hasta que el usuario pulsa play: queda pendiente y guardamos su miniatura de respaldo
    let fb=null;try{if(m.prev)fb=await createImageBitmap(await(await fj(m.prev)).blob())}catch(_){}
    if(!fb){v.remove();throw new Error('video timeout '+inf())}
-   log('ℹ vídeo pendiente ('+inf()+'): se cargará al pulsar ▶');return{v,credit:m.credit,lazy:1,fb}}
-  return{v,credit:m.credit,sal:sal(v,v.videoWidth,v.videoHeight)}}
+   log('ℹ vídeo pendiente ('+inf()+'): se cargará al pulsar ▶');return{v,credit:m.credit,lazy:1,fb,blob:b}}
+  return{v,credit:m.credit,sal:sal(v,v.videoWidth,v.videoHeight),blob:b}}
  const im=await createImageBitmap(b);return{img:im,credit:m.credit,sal:sal(im,im.width,im.height)};
 }
+// ---------- Verificar el clip entero antes de aprobarlo ----------
+const jok=v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now());
+function jfail(v,e){const m=String((e&&e.message)||e);if(/^(429|5\d\d)/.test(m)){coolJ[v.id]=Date.now()+60000;log('⏳ juez '+v.id+': límite o saturado ('+em(e)+')')}else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}}
+const b64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b)});
+async function gem(parts){let er;for(const m of await gjModels()){try{const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})})).json();VJ[0].last=m;return j.candidates[0].content.parts[0].text}catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}}throw er||new Error('503 sin respuesta')}
+async function frames(v){ // 4 fotogramas (10%, 35%, 65%, 90%) del clip, si el navegador puede decodificarlo
+ const o=[];try{
+  if(!v||!v.videoWidth||!isFinite(v.duration)||v.duration<=0)return o;
+  const cv=document.createElement('canvas');cv.width=384;cv.height=Math.round(384*v.videoHeight/v.videoWidth);const x=cv.getContext('2d');
+  for(const f of [.1,.35,.65,.9]){v.currentTime=v.duration*f;await new Promise(res=>{const h=()=>{v.removeEventListener('seeked',h);res()};v.addEventListener('seeked',h);setTimeout(res,3000)});x.drawImage(v,0,0,cv.width,cv.height);o.push(cv.toDataURL('image/jpeg',.7).split(',')[1])}
+  v.currentTime=0;
+ }catch(_){}
+ return o}
+async function verifyClip(s,r){
+ if(!$('chk').checked||s._r||!r.blob)return true;
+ const P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas estrictas: 1) el sujeto principal debe ser EXACTAMENTE el sujeto obligatorio durante el clip (no otra especie, lugar o época; si solo sale un instante o de fondo, no vale); 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe ser coherente con la locución; 4) ante la duda, descarta. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una última línea "RESPUESTA: SI" o "RESPUESTA: NO".`,
+ vd=tx=>{const m=String(tx).replace(/<think>[\s\S]*?<\/think>/g,'').match(/RESPUESTA\s*[:=]?\s*\**\s*(S[IÍ]|NO)/i);return m?/^S/i.test(m[1]):null};
+ try{
+  const mime=/^video\//.test(r.blob.type)?r.blob.type:'video/mp4',lab=o=>o===false?'NO apto':o?'apto':'sin veredicto',clean=t=>String(t).replace(/<think>[\s\S]*?<\/think>/g,'').trim();
+  let vp=null;const gv=async t=>{await slot('gemini');return gem([vp||(vp={inline_data:{mime_type:mime,data:await b64(r.blob)}}),{text:t}])};
+  // 1) Gemini ve el clip entero y decide
+  let gok=null;
+  if(jok(VJ[0])&&r.blob.size<=14e6){
+   try{gok=vd(await gv(P(1)));log('👁 Gemini vio el clip entero ('+(VJ[0].last||'')+') → '+lab(gok))}
+   catch(e){jfail(VJ[0],e)}
+  }
+  if(gok===false)return false;
+  // 2) Groq no acepta vídeo (solo imágenes): ve 4 fotogramas
+  const G=VJ[1];let fr=null;const getFr=async()=>fr||(fr=await frames(r.v));
+  const groq=async()=>{
+   if(G.id!=='groq'||!jok(G))return null;
+   const f=await getFr();if(!f.length)return null;
+   try{const tx=clean(await ask(G,f,P(0))),ok=vd(tx);log('👁 groq vio '+f.length+' fotogramas ('+(G.last||'')+') → '+lab(ok));return{ok,tx}}
+   catch(e){jfail(G,e);return null}
+  };
+  if(gok===true){
+   // Gemini dijo SÍ: Groq lo contrasta; si discrepa, Gemini vuelve a ver el clip y tiene la última palabra
+   const gr=await groq();
+   if(gr&&gr.ok===false){
+    log('⚖ groq discrepa: Gemini revisa el clip otra vez');
+    try{
+     const ok2=vd(await gv(P(1)+'\n\nOJO: otro revisor, que solo vio 4 fotogramas, dice que NO encaja: "'+gr.tx.slice(0,500)+'". Vuelve a ver el clip entero con atención. No te limites a confirmar tu respuesta anterior ni a ceder: decide según lo que realmente se ve.'));
+     log('⚖ Gemini tras revisar → '+lab(ok2));if(ok2!=null)return ok2;
+    }catch(e){jfail(VJ[0],e)}
+   }
+   return true;
+  }
+  // 3) Gemini no dio veredicto (sin cuota, clip grande…): decide Groq con fotogramas
+  const gr=await groq();if(gr&&gr.ok!=null)return gr.ok;
+  fr=await getFr();
+  if(!fr.length){log('ℹ no pude sacar fotogramas de este clip; me quedo con la aprobación de la portada');return true}
+  for(const v of VJ.filter(x=>jok(x)&&x!==G)){
+   try{const ok=vd(await ask(v,fr,P(0)));log('👁 '+v.id+' vio '+fr.length+' fotogramas ('+(v.last||'')+') → '+(ok===false?'NO apto':ok?'apto':'sin veredicto'));if(ok!=null)return ok}
+   catch(e){jfail(v,e)}
+  }
+ }catch(e){log('✗ verificación: '+em(e))}
+ return true;
+}
+
 async function getMedia(s,k){
  const vm=$('vis').value;
  if(s.c)return{};
@@ -336,7 +398,9 @@ async function getMedia(s,k){
    if(!cs.length)continue;
    const i=await rank(s,cs).catch(e=>{log('✗ juez: '+em(e));return null});if(i===-1){log('↺ ninguna encaja: '+q);continue}
    for(const m of(i==null?cs:[cs[i],...cs.filter((_,j)=>j!==i)]).filter(m=>!used.has(ukey(m.url))).slice(0,3)){
-    try{used.add(ukey(m.url));if(m.t==='vid')log('⬇ probando clip: '+m.p);return await load(m)}
+    try{used.add(ukey(m.url));if(m.t==='vid')log('⬇ probando clip: '+m.p);const r=await load(m);
+    if(m.t==='vid'){const ok=await verifyClip(s,r);delete r.blob;if(!ok){if(r.v)r.v.remove();log('✗ clip rechazado tras verlo: '+m.p);continue}}
+    return r}
     catch(e){log('✗ '+m.p+': '+em(e));if(m.t==='vid'&&/timeout/.test(e.message))deadS.add(m.p)}
    }
   }
@@ -458,6 +522,7 @@ function bestWin(p,f){
 }
 const bgc=document.createElement('canvas');
 function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
+ if(s.v&&!s.v.videoWidth&&s.fb)s=Object.assign({},s,{v:null,img:s.fb,sal:null});
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0;
  const b0=Math.max(W/sw,H/sh),vf=Math.min(W/(sw*b0),H/(sh*b0)),ft=$('fit').value;
