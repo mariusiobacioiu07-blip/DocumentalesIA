@@ -56,6 +56,7 @@ small{color:var(--mut)}
 <select id="fit"><option value="auto">Automático (recorta si cabe; si no, imagen completa con fondo desenfocado)</option><option value="blur">Siempre imagen completa con fondo desenfocado</option><option value="crop">Siempre recorte inteligente</option></select>
 <label>Música de fondo (opcional, tu propio archivo libre de derechos)</label>
 <input id="mus" type="file" accept="audio/*">
+<label class="chk"><input id="amb" type="checkbox" checked> Música de fondo y efectos automáticos (si no subes tu música)</label>
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
 <label class="chk"><input id="pv" type="checkbox" checked> Preferir clips de vídeo cuando los haya</label>
 <label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
@@ -343,15 +344,16 @@ async function frames(v){ // 4 fotogramas (10%, 35%, 65%, 90%) del clip, si el n
  return o}
 async function verifyClip(s,r){
  if(!$('chk').checked||s._r||!r.blob)return true;
- const P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas estrictas: 1) el sujeto principal debe ser EXACTAMENTE el sujeto obligatorio durante el clip (no otra especie, lugar o época; si solo sale un instante o de fondo, no vale); 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe ser coherente con la locución; 4) ante la duda, descarta. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una última línea "RESPUESTA: SI" o "RESPUESTA: NO".`,
+ const P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas: 1) el sujeto principal debe ser el sujeto obligatorio (misma especie, lugar o época, no otra) durante la MAYOR PARTE del clip; si solo sale un instante o de fondo, no vale; 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe encajar con el tema de la locución: NO hace falta que se vea exactamente la acción que describe (es metraje de archivo), basta con que no la contradiga; 4) si el sujeto correcto se ve bien y es imagen real, APRUEBA; descarta solo ante un fallo claro. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una última línea "RESPUESTA: SI" o "RESPUESTA: NO".`,
  vd=tx=>{const m=String(tx).replace(/<think>[\s\S]*?<\/think>/g,'').match(/RESPUESTA\s*[:=]?\s*\**\s*(S[IÍ]|NO)/i);return m?/^S/i.test(m[1]):null};
+ const nj=()=>!VJ.some(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id));
  try{
   const mime=/^video\//.test(r.blob.type)?r.blob.type:'video/mp4',lab=o=>o===false?'NO apto':o?'apto':'sin veredicto',clean=t=>String(t).replace(/<think>[\s\S]*?<\/think>/g,'').trim();
   let vp=null;const gv=async t=>{await slot('gemini');return gem([vp||(vp={inline_data:{mime_type:mime,data:await b64(r.blob)}}),{text:t}])};
   // 1) Gemini ve el clip entero y decide
   let gok=null;
   if(jok(VJ[0])&&r.blob.size<=14e6){
-   try{gok=vd(await gv(P(1)));log('👁 Gemini vio el clip entero ('+(VJ[0].last||'')+') → '+lab(gok))}
+   try{const t1=clean(await gv(P(1)));gok=vd(t1);log('👁 Gemini vio el clip entero ('+(VJ[0].last||'')+') → '+lab(gok)+' · '+t1.split('\n')[0].slice(0,140))}
    catch(e){jfail(VJ[0],e)}
   }
   if(gok===false)return false;
@@ -378,15 +380,18 @@ async function verifyClip(s,r){
   // 3) Gemini no dio veredicto (sin cuota, clip grande…): decide Groq con fotogramas
   const gr=await groq();if(gr&&gr.ok!=null)return gr.ok;
   fr=await getFr();
-  if(!fr.length){log('ℹ no pude sacar fotogramas de este clip; me quedo con la aprobación de la portada');return true}
+  if(!fr.length){log('✗ no pude verificar este clip (grande o sin fotogramas): lo descarto');return nj()}
   for(const v of VJ.filter(x=>jok(x)&&x!==G)){
    try{const ok=vd(await ask(v,fr,P(0)));log('👁 '+v.id+' vio '+fr.length+' fotogramas ('+(v.last||'')+') → '+(ok===false?'NO apto':ok?'apto':'sin veredicto'));if(ok!=null)return ok}
    catch(e){jfail(v,e)}
   }
  }catch(e){log('✗ verificación: '+em(e))}
- return true;
+ if(!nj())log('✗ ningún juez pudo verificar este clip: lo descarto');
+ return nj();
 }
 
+const usedH=[],hd=(a,b)=>{let n=0;for(let i=0;i<a.length;i++)n+=a[i]!==b[i];return n};
+function dh(src,sw,sh){try{const c=document.createElement('canvas');c.width=9;c.height=8;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(src,0,0,9,8);const d=x.getImageData(0,0,9,8).data,g=i=>d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;let o='';for(let j=0;j<8;j++)for(let i=0;i<8;i++)o+=g(j*9+i)>g(j*9+i+1)?'1':'0';return o}catch(_){return null}}
 async function getMedia(s,k){
  const vm=$('vis').value;
  if(s.c)return{};
@@ -398,8 +403,11 @@ async function getMedia(s,k){
    if(!cs.length)continue;
    const i=await rank(s,cs).catch(e=>{log('✗ juez: '+em(e));return null});if(i===-1){log('↺ ninguna encaja: '+q);continue}
    for(const m of(i==null?cs:[cs[i],...cs.filter((_,j)=>j!==i)]).filter(m=>!used.has(ukey(m.url))).slice(0,3)){
-    try{used.add(ukey(m.url));if(m.t==='vid')log('⬇ probando clip: '+m.p);const r=await load(m);
+    try{if(used.has(ukey(m.url)))continue;used.add(ukey(m.url));if(m.t==='vid')log('⬇ probando clip: '+m.p);const r=await load(m);
     if(m.t==='vid'){const ok=await verifyClip(s,r);delete r.blob;if(!ok){if(r.v)r.v.remove();log('✗ clip rechazado tras verlo: '+m.p);continue}}
+    const hh=r.img?dh(r.img,r.img.width,r.img.height):(r.v&&r.v.videoWidth?dh(r.v,r.v.videoWidth,r.v.videoHeight):null);
+    if(hh&&usedH.some(x=>hd(x,hh)<=9)){log('↺ casi idéntica a otra ya usada: la salto ('+m.p+')');if(r.v)r.v.remove();continue}
+    if(hh)usedH.push(hh);
     return r}
     catch(e){log('✗ '+m.p+': '+em(e));if(m.t==='vid'&&/timeout/.test(e.message))deadS.add(m.p)}
    }
@@ -443,15 +451,32 @@ async function voices(){
  }
  return null;
 }
-let music=null;
-$('mus').onchange=async e=>{try{music=e.target.files[0]?await ctx.decodeAudioData(await e.target.files[0].arrayBuffer()):null;log('Música cargada')}catch(_){music=null;log('No se pudo leer la música')}};
+let music=null,mAuto=false;
+// Música ambiental generada (sin archivos ni claves): pad cinematográfico en bucle sin cortes, la tonalidad depende del tema
+async function synthMusic(seed){
+ const SR=44100,L=48,T=4,OC=window.OfflineAudioContext||window.webkitOfflineAudioContext,oc=new OC(2,SR*(L+T),SR),root=[45,47,43,40][seed%4],
+ P=[[[0,3,7],[-4,0,3],[3,7,10],[-2,2,5]],[[0,3,7],[5,8,12],[-4,0,3],[-5,-1,2]]][(seed>>2)&1],f=n=>440*Math.pow(2,(n-69)/12),cl=L/4;
+ const out=oc.createGain(),rv=oc.createConvolver(),ir=oc.createBuffer(2,SR*3,SR);
+ for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2.5)}
+ rv.buffer=ir;const wet=oc.createGain();wet.gain.value=.6;out.connect(oc.destination);out.connect(rv);rv.connect(wet);wet.connect(oc.destination);
+ P.forEach((ch,ci)=>{const t=ci*cl;
+  ch.forEach((iv,k)=>{for(const dt of [-7,7]){const o=oc.createOscillator(),lp=oc.createBiquadFilter(),g=oc.createGain();o.type='sawtooth';o.frequency.value=f(root+iv+12);o.detune.value=dt;lp.type='lowpass';lp.frequency.value=700;
+   g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.05,t+3);g.gain.setValueAtTime(.05,t+cl-.5);g.gain.linearRampToValueAtTime(0,t+cl+3);o.connect(lp);lp.connect(g);g.connect(out);o.start(t);o.stop(t+cl+3.2)}});
+  const b=oc.createOscillator(),bg=oc.createGain();b.frequency.value=f(root+ch[0]-12);bg.gain.setValueAtTime(0,t);bg.gain.linearRampToValueAtTime(.12,t+2);bg.gain.setValueAtTime(.12,t+cl-.5);bg.gain.linearRampToValueAtTime(0,t+cl+2.5);b.connect(bg);bg.connect(out);b.start(t);b.stop(t+cl+2.7);
+  for(let j=0;j<cl/1.5;j++){const o=oc.createOscillator(),g=oc.createGain(),at=t+j*1.5;o.type='sine';o.frequency.value=f(root+ch[(j*2)%3]+24);g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(.045,at+.02);g.gain.exponentialRampToValueAtTime(.0001,at+2.2);o.connect(g);g.connect(out);o.start(at);o.stop(at+2.3)}
+ });
+ const r=await oc.startRendering(),o=ctx.createBuffer(2,SR*L,SR);let pk=0.0001;
+ for(let c=0;c<2;c++){const a=r.getChannelData(c),d=o.getChannelData(c);d.set(a.subarray(0,SR*L));for(let i=0;i<SR*T;i++)d[i]+=a[SR*L+i];for(let i=0;i<d.length;i++)pk=Math.max(pk,Math.abs(d[i]))}
+ for(let c=0;c<2;c++){const d=o.getChannelData(c);for(let i=0;i<d.length;i++)d[i]/=pk}
+ return o}
+$('mus').onchange=async e=>{try{mAuto=false;music=e.target.files[0]?await ctx.decodeAudioData(await e.target.files[0].arrayBuffer()):null;log('Música cargada')}catch(_){music=null;log('No se pudo leer la música')}};
 
 // ---------- Generación ----------
 let scenes=[],title='',cancel=false;
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=topic.slice(0,60);cancel=false;ctx.resume();
- $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);prog(0);
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);prog(0);
  const total=Math.round(+$('min').value*12),L=$('lang').value==='es-ES'?'español':'English';
  try{
   for(let s=0;s<total;s+=10){
@@ -470,6 +495,8 @@ $('go').onclick=async()=>{
   log('Generando voz (una sola voz para todo el video)…');
   const vp=await voices();if(cancel)throw new Error('Cancelado');
   if(!vp){scenes.forEach(s=>s.a=null);log('⚠ No se pudo generar la voz; el video saldrá sin voz.')}
+  if(mAuto)music=null;
+  if(!music&&$('amb').checked){try{music=await synthMusic([...topic].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)>>>0);mAuto=true;log('🎵 música de fondo generada')}catch(e){log('✗ música: '+em(e))}}
   let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
@@ -573,7 +600,10 @@ async function run(rec,from=0){
  const vg=ctx.createGain(),t0=ctx.currentTime+.3,srcs=[];
  vg.connect(dest);if(!rec&&!ok)vg.connect(ctx.destination);
  scenes.forEach(s=>{if(s.v)s.v.currentTime=0;if(s.a&&s.st+s.a.duration>from){const n=ctx.createBufferSource();n.buffer=s.a;n.connect(vg);n.start(t0+Math.max(0,s.st-from),Math.max(0,from-s.st));srcs.push(n)}});
- if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=.12;n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
+ if($('amb').checked){const nb=ctx.createBuffer(1,ctx.sampleRate*1.3|0,ctx.sampleRate),nd=nb.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
+  scenes.forEach((s,i)=>{const t=s.st-(i?X:0)-from;if(t<0)return;const at=t0+t,n=ctx.createBufferSource(),fl=ctx.createBiquadFilter(),g=ctx.createGain();n.buffer=nb;fl.type='bandpass';fl.Q.value=.8;fl.frequency.setValueAtTime(250,at);fl.frequency.exponentialRampToValueAtTime(3000,at+.9);
+   g.gain.setValueAtTime(.0001,at);g.gain.linearRampToValueAtTime(i?.12:.18,at+.45);g.gain.exponentialRampToValueAtTime(.0001,at+1.1);n.connect(fl);fl.connect(g);g.connect(vg);n.start(at);n.stop(at+1.2);srcs.push(n)})}
+ if(music){const n=ctx.createBufferSource(),mg=ctx.createGain();n.buffer=music;n.loop=true;mg.gain.value=mAuto?.17:.12;n.connect(mg);mg.connect(vg);n.start(t0,from%music.duration);srcs.push(n)}
  let mr,ch=[];
  if(rec){const mt=['video/webm;codecs=vp9,opus','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t))||'';
   mr=new MediaRecorder(new MediaStream([...cv.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:5e6});
