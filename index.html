@@ -201,7 +201,7 @@ const STOCK=[
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,prev:p.src.medium,credit:'Pexels – '+p.photographer}))):null}},
  {id:'pixabay-video',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&video_type=film&q=`+enc(q))).json();
-  const a=j.hits.map(h=>{const f=h.videos.small||h.videos.medium;return f&&f.url&&{t:'vid',url:f.url,prev:(h.videos.medium||h.videos.small||h.videos.tiny||{}).thumbnail,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
+  const a=j.hits.map(h=>{const V=h.videos,c=[V.medium,V.small,V.tiny,V.large].filter(f=>f&&f.url),f=c.filter(f=>f.size>0&&f.size<=10e6).sort((x,y)=>y.width-x.width)[0]||c.filter(f=>f.size>0).sort((x,y)=>x.size-y.size)[0]||V.small||V.medium;return f&&f.url&&!(f.size>14e6)&&{t:'vid',url:f.url,prev:(h.videos.medium||h.videos.small||h.videos.tiny||{}).thumbnail,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
   return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,prev:h.webformatURL,credit:'Pixabay – '+h.user}))):null}},
@@ -305,7 +305,7 @@ Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto c
    if(n<0)return -1;if(sub[n])return sub[n].i;
   }catch(e){
    const m=String((e&&e.message)||e);
-   if(/^(429|5\d\d)/.test(m)){coolJ[v.id]=Date.now()+60000;log('⏳ juez '+v.id+': límite o saturado, paso al siguiente ('+em(e)+')')}
+   if(/^(429|5\d\d)|Load failed|Failed to fetch|NetworkError/i.test(m)){coolJ[v.id]=Date.now()+(/^(429|5\d\d)/.test(m)?60000:20000);log('⏳ juez '+v.id+': límite o red, paso al siguiente ('+em(e)+')')}
    else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}
   }
  }
@@ -331,7 +331,7 @@ async function load(m){
 }
 // ---------- Verificar el clip entero antes de aprobarlo ----------
 const jok=v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now());
-function jfail(v,e){const m=String((e&&e.message)||e);if(/^(429|5\d\d)/.test(m)){coolJ[v.id]=Date.now()+60000;log('⏳ juez '+v.id+': límite o saturado ('+em(e)+')')}else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}}
+function jfail(v,e){const m=String((e&&e.message)||e);if(/^(429|5\d\d)|Load failed|Failed to fetch|NetworkError/i.test(m)){coolJ[v.id]=Date.now()+(/^(429|5\d\d)/.test(m)?60000:20000);log('⏳ juez '+v.id+': límite o red ('+em(e)+')')}else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}}
 const b64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b)});
 async function gem(parts){let er;for(const m of await gjModels()){try{const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})})).json();VJ[0].last=m;return j.candidates[0].content.parts[0].text}catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}}throw er||new Error('503 sin respuesta')}
 async function frames(v){ // 4 fotogramas (10%, 35%, 65%, 90%) del clip, si el navegador puede decodificarlo
@@ -347,6 +347,7 @@ async function verifyClip(s,r){
  const P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas: 1) el sujeto principal debe ser el sujeto obligatorio (misma especie, lugar o época, no otra) durante la MAYOR PARTE del clip; si solo sale un instante o de fondo, no vale; 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe encajar con el tema de la locución: NO hace falta que se vea exactamente la acción que describe (es metraje de archivo), basta con que no la contradiga; 4) si el sujeto correcto se ve bien y es imagen real, APRUEBA; descarta solo ante un fallo claro. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una última línea "RESPUESTA: SI" o "RESPUESTA: NO".`,
  vd=tx=>{const m=String(tx).replace(/<think>[\s\S]*?<\/think>/g,'').match(/RESPUESTA\s*[:=]?\s*\**\s*(S[IÍ]|NO)/i);return m?/^S/i.test(m[1]):null};
  const nj=()=>!VJ.some(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id));
+ if(!VJ.some(jok)&&!nj()){const w=Math.min(65000,Math.min(...VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)).map(v=>(coolJ[v.id]||0)-Date.now())));if(w>0){log('⏳ jueces en pausa: espero '+Math.ceil(w/1000)+' s');await sleep(w+300)}}
  try{
   const mime=/^video\//.test(r.blob.type)?r.blob.type:'video/mp4',lab=o=>o===false?'NO apto':o?'apto':'sin veredicto',clean=t=>String(t).replace(/<think>[\s\S]*?<\/think>/g,'').trim();
   let vp=null;const gv=async t=>{await slot('gemini');return gem([vp||(vp={inline_data:{mime_type:mime,data:await b64(r.blob)}}),{text:t}])};
@@ -551,7 +552,7 @@ const bgc=document.createElement('canvas');
 function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  if(s.v&&!s.v.videoWidth&&s.fb)s=Object.assign({},s,{v:null,img:s.fb,sal:null});
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
- const md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0;
+ const land=W>H,md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=land?0:md===2?(.5-t)*50:md===3?(t-.5)*50:0; // horizontal: recorte centrado simple, sin recorte inteligente ni desplazamiento lateral
  const b0=Math.max(W/sw,H/sh),vf=Math.min(W/(sw*b0),H/(sh*b0)),ft=$('fit').value;
  if(Math.abs(Math.log((sw/sh)/(W/H)))>.08&&(ft==='blur'||(ft==='auto'&&vf<.6))){
   // imagen completa, con fondo desenfocado (sin ctx.filter: no va en Safari)
@@ -561,7 +562,7 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
   const b=Math.min(W/sw,H/sh)*(s.v?1:(md===1?1.06-.06*t:1+.06*t)),w=sw*b,h=sh*b;cx.drawImage(src,(W-w)/2,(H-h)/2,w,h);return}
  const b=Math.max(W/sw,H/sh),w=sw*b*z,h=sh*b*z,cl=(v,m)=>Math.min(0,Math.max(m,v));
  let x=(W-w)/2+px,y=(H-h)/2;
- if(s.sal){
+ if(s.sal&&!land){
   const dr=s.v?0:(t-.5)*(md%2?-1:1);
   if(w>W+2){x=cl(W/2-bestWin(s.sal.col,W/w)*w,W-w);x=cl(x+dr*Math.min((w-W)*.15,120),W-w)}
   else if(h>H+2){y=cl(H/2-bestWin(s.sal.row,H/h)*h,H-h);y=cl(y+dr*Math.min((h-H)*.15,120),H-h)}
