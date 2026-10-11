@@ -53,7 +53,7 @@ small{color:var(--mut)}
 <label>Formato</label>
 <select id="fmt"><option value="h">Horizontal 16:9 (YouTube)</option><option value="v">Vertical 9:16 (Shorts, TikTok, Reels)</option></select>
 <label>Encuadre cuando la imagen no encaja en el formato</label>
-<select id="fit"><option value="crop">Recorte inteligente (se centra en lo importante)</option><option value="blur">Imagen completa con fondo desenfocado</option></select>
+<select id="fit"><option value="auto">Automático (recorta si cabe; si no, imagen completa con fondo desenfocado)</option><option value="blur">Siempre imagen completa con fondo desenfocado</option><option value="crop">Siempre recorte inteligente</option></select>
 <label>Música de fondo (opcional, tu propio archivo libre de derechos)</label>
 <input id="mus" type="file" accept="audio/*">
 <label class="chk"><input id="lb" type="checkbox" checked> Barras de cine (2.39:1)</label>
@@ -115,7 +115,7 @@ async function models(p){
   }
  }catch(e){log('(no pude listar modelos de '+p.name+')')}
  if(!ms.length)ms=[p.model];
- p.ms=[...new Set(ms)].slice(0,6);log(p.name+' → '+p.ms[0]);return p.ms;
+ p.ms=[...new Set(ms)].slice(0,8);log(p.name+' → '+p.ms[0]);return p.ms;
 }
 let gTTSm;
 async function gttsModel(){
@@ -200,7 +200,7 @@ const STOCK=[
   return j.photos.length?pick(j.photos.map(p=>({t:'img',url:p.src.large2x,prev:p.src.medium,credit:'Pexels – '+p.photographer}))):null}},
  {id:'pixabay-video',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/videos/?key=${keys.pixabay}&per_page=6&q=`+enc(q))).json();
-  const a=j.hits.map(h=>{const f=h.videos.small||h.videos.medium;return f&&f.url&&{t:'vid',url:f.url,prev:(h.videos.tiny||{}).thumbnail,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
+  const a=j.hits.map(h=>{const f=h.videos.small||h.videos.medium;return f&&f.url&&{t:'vid',url:f.url,prev:(h.videos.medium||h.videos.small||h.videos.tiny||{}).thumbnail,credit:'Pixabay – '+h.user}}).filter(Boolean);return a.length?pick(a):null}},
  {id:'pixabay',key:'pixabay',f:async q=>{
   const j=await(await fj(`https://pixabay.com/api/?key=${keys.pixabay}&image_type=photo&orientation=${isV()?'vertical':'horizontal'}&safesearch=true&per_page=6&q=`+enc(q))).json();
   return j.hits.length?pick(j.hits.map(h=>({t:'img',url:h.largeImageURL,prev:h.webformatURL,credit:'Pixabay – '+h.user}))):null}},
@@ -233,67 +233,94 @@ async function gather(s,q){
  const rs=await Promise.all(L.map(async p=>{try{return((await Promise.race([p.f(q,s),sleep(12000).then(()=>null)]))||[]).slice(0,p.w?4:2).map(c=>({...c,p:p.id}))}catch(e){log('✗ '+p.id+': '+em(e));if(fatal(e.message))deadS.add(p.id);return[]}}));
  const seen=new Set(),o=rs.flat().filter(c=>c.url&&!seen.has(c.url)&&seen.add(c.url));if($('pv').checked)o.sort((a,b)=>(b.t==='vid')-(a.t==='vid'));return o.slice(0,14);
 }
-const deadJ=new Set(),coolJ={},gate={},GAP={gemini:4500,groq:2500,mistral:1600},BADV=/whisper|guard|embed|tts|moderation|safeguard|ocr|transcribe/i;
+const deadJ=new Set(),coolJ={},gate={},GAP={gemini:4500,groq:2500,mistral:1600,openrouter:3000,pollinations:3000},BADV=/whisper|guard|embed|tts|moderation|safeguard|ocr|transcribe/i;
 async function slot(id){const n=Date.now(),t=Math.max(n,gate[id]||0);gate[id]=t+(GAP[id]||0);if(t>n)await sleep(t-n)}
+// Jueces de imagen, en orden de prioridad: el primero que responda decide
 const VJ=[
  {id:'gemini',max:14},
- {id:'groq',max:5,re:/llama-4|scout|maverick|vision|-vl\b|-vl-|qwen\/qwen3\.[6-9]|qwen\/qwen[4-9]/,mt:1200,url:'https://api.groq.com/openai/v1/chat/completions'},
- {id:'mistral',max:5,re:/pixtral|mistral-(small|medium|large)-latest/,url:'https://api.mistral.ai/v1/chat/completions'}
+ {id:'groq',max:3,re:/llama-4|scout|maverick|vision|-vl\b|-vl-|qwen\/qwen3\.[6-9]|qwen\/qwen[4-9]/,mt:1200,url:'https://api.groq.com/openai/v1/chat/completions'},
+ {id:'mistral',max:4,re:/pixtral|mistral-(small|medium|large)-latest/,url:'https://api.mistral.ai/v1/chat/completions'},
+ {id:'openrouter',max:4,re:/./,vf:m=>/:free$/.test(m.id)&&((m.architecture||{}).input_modalities||[]).includes('image'),url:'https://openrouter.ai/api/v1/chat/completions'},
+ {id:'pollinations',nokey:1,max:4,fixed:['openai'],url:'https://text.pollinations.ai/openai'}
 ];
+let gJ;
+async function gjModels(){ // todos los modelos Gemini con visión disponibles: flash y lite primero (más cuota), luego pro
+ if(gJ)return gJ;
+ try{const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),v=n=>parseFloat((n.match(/gemini-([\d.]+)/)||[0,0])[1]);
+  gJ=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-(flash|pro)/.test(m.name)&&!/tts|image|embed|audio|live|native|robotics|computer|thinking/i.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>(/pro/.test(a)-/pro/.test(b))||(/lite/.test(b)-/lite/.test(a))||v(b)-v(a)).slice(0,10)}catch(_){}
+ if(!gJ||!gJ.length)gJ=[...await models(LLMS[0])];
+ return gJ;
+}
 async function ask(v,D,t){
  await slot(v.id);
  if(v.id==='gemini'){
-  const ms=[...await models(LLMS[0])].sort((a,b)=>/lite/.test(b)-/lite/.test(a));let er;
-  for(const m of ms){
+  let er;
+  for(const m of await gjModels()){
    try{
     const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[...D.flatMap((d,i)=>[{text:'Imagen '+i+':'},{inline_data:{mime_type:'image/jpeg',data:d}}]),{text:t}]}]})})).json();
-    return j.candidates[0].content.parts[0].text;
-   }catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(e.message))throw e}
+    v.last=m;return j.candidates[0].content.parts[0].text;
+   }catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
   throw er||new Error('503 sin respuesta');
  }
  if(v.nm)throw new Error('404 sin modelo de visión');
  if(!v.ms){
-  const j=await(await fj(LIST[v.id],{headers:{Authorization:'Bearer '+keys[v.id]}})).json(),ids=(j.data||[]).map(m=>m.id);
-  const ms=ids.filter(i=>v.re.test(i)&&!BADV.test(i)).sort().reverse().slice(0,3);
-  if(!ms.length){v.nm=1;log('ℹ '+v.id+' modelos: '+ids.slice(0,20).join(', '));throw new Error('404 sin modelo de visión')}
-  v.ms=ms;
+  if(v.fixed)v.ms=v.fixed;
+  else{
+   const j=await(await fj(LIST[v.id],{headers:{Authorization:'Bearer '+keys[v.id]}})).json(),ids=(j.data||[]).filter(v.vf||(()=>true)).map(m=>m.id);
+   const ms=ids.filter(i=>v.re.test(i)&&!BADV.test(i)).sort().reverse().slice(0,4);
+   if(!ms.length){v.nm=1;log('ℹ '+v.id+' modelos: '+ids.slice(0,20).join(', '));throw new Error('404 sin modelo de visión')}
+   v.ms=ms;
+  }
  }
+ const h={'Content-Type':'application/json'};if(keys[v.id])h.Authorization='Bearer '+keys[v.id];
  let er;
  for(const m of v.ms){
   for(const x of (v.mt?[{reasoning_effort:'none'},{}]:[{}])){
    try{
-    const j=await(await fj(v.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys[v.id]},body:JSON.stringify({model:m,temperature:0,max_tokens:v.mt||8,...x,messages:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'text',text:'Imagen '+i+':'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+d}}]),{type:'text',text:t}]}]})})).json();
-    return j.choices[0].message.content;
-   }catch(e){er=e;if(!/^(404|400|422)/.test(e.message))throw e}
+    const j=await(await fj(v.url,{method:'POST',headers:h,body:JSON.stringify({model:m,temperature:0,max_tokens:v.mt||8,...x,messages:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'text',text:'Imagen '+i+':'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+d}}]),{type:'text',text:t}]}]})})).json();
+    v.last=m;return j.choices[0].message.content;
+   }catch(e){er=e;if(!/^(404|400|422|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
  }
  throw er||new Error('404 sin modelo de visión');
 }
 async function rank(s,cs){
  if(s._r||!$('chk').checked)return null;
- const J=VJ.filter(v=>keys[v.id]&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length)return null;
+ const J=VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length)return null;
  const bm=await Promise.all(cs.map(async c=>{try{if(!c.prev&&c.t==='vid')return null;return await createImageBitmap(await(await fj(c.prev||c.url,{ms:20000})).blob())}catch(_){return null}})),th=[];
  bm.forEach((b,i)=>{if(!b)return;const cv=document.createElement('canvas');cv.width=384;cv.height=Math.round(384*b.height/b.width);cv.getContext('2d').drawImage(b,0,0,cv.width,cv.height);th.push({i,d:cv.toDataURL('image/jpeg',.7).split(',')[1]})});
  if(!th.length)return null;
- const vs=await Promise.all(J.map(async v=>{
+ for(const v of J){
   const sub=th.slice(0,v.max),t=`Documental sobre "${title}". Locución de esta escena: "${s.n}". Se te muestran ${sub.length} imágenes numeradas desde 0. Elige la que mejor ilustra EXACTAMENTE lo que dice la locución y encaja con el tema (lugar, animales, época, clima), con buena calidad y sin texto ni marcas de agua.${$('pv').checked&&sub.some(x=>cs[x.i].t==='vid')?' Las imágenes '+sub.map((x,k)=>cs[x.i].t==='vid'?k:-1).filter(k=>k>=0).join(', ')+' son el primer fotograma de clips de vídeo: si un clip encaja casi igual de bien que una foto, prefiere el clip.':''}${isV()?' El vídeo es VERTICAL 9:16 y se verá un recorte vertical: prefiere imágenes verticales o con el sujeto principal centrado y grande.':''} Si ninguna encaja bien responde -1. Responde solo con el número.`;
-  for(let a=0;a<2;a++){
-   try{const n=parseInt(String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,'').match(/-?\d+/)[0]);return n<0?-1:(sub[n]?sub[n].i:null)}
-   catch(e){
-    const m=String((e&&e.message)||e);
-    if(/^(429|5\d\d)/.test(m)){if(!a){await sleep(7000);continue}coolJ[v.id]=Date.now()+60000;log('⏳ juez '+v.id+': límite o saturado, descansa 60s ('+em(e).slice(0,50)+')');return null}
-    log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id);return null}
+  try{
+   const n=parseInt(String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,'').match(/-?\d+/)[0]);
+   log('✓ juez '+v.id+(v.last?' ('+v.last+')':'')+' → '+(n<0?'ninguna encaja':'imagen '+n));
+   if(n<0)return -1;if(sub[n])return sub[n].i;
+  }catch(e){
+   const m=String((e&&e.message)||e);
+   if(/^(429|5\d\d)/.test(m)){coolJ[v.id]=Date.now()+60000;log('⏳ juez '+v.id+': límite o saturado, paso al siguiente ('+em(e)+')')}
+   else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}
   }
-  return null;
- })),ok=vs.filter(x=>x!=null);
- if(!ok.length)return null;
- const c={};ok.forEach(x=>c[x]=(c[x]||0)+1);
- return +Object.keys(c).sort((a,b)=>c[b]-c[a]||ok.indexOf(+a)-ok.indexOf(+b))[0];
+ }
+ return null;
 }
+
 async function load(m){
  const b=await Promise.race([(await fj(m.url)).blob().then(x=>m.t==='vid'&&!/^video\//.test(x.type)?new Blob([x],{type:'video/mp4'}):x),sleep(30000).then(()=>{throw new Error('download timeout')})]);
- if(m.t==='vid'){const v=document.createElement('video');v.muted=v.loop=v.playsInline=true;v.preload='auto';v.setAttribute('playsinline','');v.setAttribute('muted','');v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';document.body.appendChild(v);v.src=URL.createObjectURL(b);v.load();v.play().catch(()=>{});await Promise.race([new Promise((r,j)=>{v.onloadeddata=v.oncanplay=v.onloadedmetadata=()=>{v.pause();r()};v.onerror=j}),sleep(30000).then(()=>{throw new Error('video timeout rs'+v.readyState+' n'+v.networkState+' e'+(v.error?v.error.code:0))})]);return{v,credit:m.credit,sal:sal(v,v.videoWidth,v.videoHeight)}}
+ if(m.t==='vid'){
+  const v=document.createElement('video'),inf=()=>b.type+' '+Math.round(b.size/1e3)+'KB rs'+v.readyState+' n'+v.networkState;
+  v.muted=v.playsInline=true;v.loop=false;v.preload='auto';v.setAttribute('playsinline','');v.setAttribute('muted','');
+  v.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';document.body.appendChild(v);
+  v.src=URL.createObjectURL(b);v.load();v.play().catch(()=>{});
+  const ok=await Promise.race([new Promise(r=>{v.onloadeddata=v.oncanplay=v.onloadedmetadata=()=>{v.pause();r(1)};v.onerror=()=>r(0)}),sleep(8000).then(()=>-1)]);
+  if(ok===0)throw new Error('video error e'+(v.error?v.error.code:0)+' '+inf());
+  if(ok===-1){
+   // iOS no carga el <video> hasta que el usuario pulsa play: queda pendiente y guardamos su miniatura de respaldo
+   let fb=null;try{if(m.prev)fb=await createImageBitmap(await(await fj(m.prev)).blob())}catch(_){}
+   if(!fb){v.remove();throw new Error('video timeout '+inf())}
+   log('ℹ vídeo pendiente ('+inf()+'): se cargará al pulsar ▶');return{v,credit:m.credit,lazy:1,fb}}
+  return{v,credit:m.credit,sal:sal(v,v.videoWidth,v.videoHeight)}}
  const im=await createImageBitmap(b);return{img:im,credit:m.credit,sal:sal(im,im.width,im.height)};
 }
 async function getMedia(s,k){
@@ -372,7 +399,7 @@ $('go').onclick=async()=>{
   log('Generando voz (una sola voz para todo el video)…');
   const vp=await voices();if(cancel)throw new Error('Cancelado');
   if(!vp){scenes.forEach(s=>s.a=null);log('⚠ No se pudo generar la voz; el video saldrá sin voz.')}
-  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur});
+  let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
   $('play').disabled=$('rec').disabled=$('sk').disabled=false;pos=0;render(0);
@@ -426,7 +453,8 @@ const bgc=document.createElement('canvas');
 function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const src=s.v||s.img,sw=s.v?s.v.videoWidth:s.img.width,sh=s.v?s.v.videoHeight:s.img.height;if(!sw)return;
  const md=i%4,z=s.v?1.04:(md===1?1.12-.12*t:1+.12*t),px=md===2?(.5-t)*50:md===3?(t-.5)*50:0;
- if(Math.abs(Math.log((sw/sh)/(W/H)))>.08&&$('fit').value==='blur'){
+ const b0=Math.max(W/sw,H/sh),vf=Math.min(W/(sw*b0),H/(sh*b0)),ft=$('fit').value;
+ if(Math.abs(Math.log((sw/sh)/(W/H)))>.08&&(ft==='blur'||(ft==='auto'&&vf<.6))){
   // imagen completa, con fondo desenfocado (sin ctx.filter: no va en Safari)
   const bw=48,bh=Math.max(8,Math.round(bw*H/W)),bb=Math.max(bw/sw,bh/sh);bgc.width=bw;bgc.height=bh;
   bgc.getContext('2d').drawImage(src,(bw-sw*bb)/2,(bh-sh*bb)/2,sw*bb,sh*bb);
@@ -435,7 +463,7 @@ function drawM(s,t,i){if(s.c)return drawChart(s.c,t);
  const b=Math.max(W/sw,H/sh),w=sw*b*z,h=sh*b*z,cl=(v,m)=>Math.min(0,Math.max(m,v));
  let x=(W-w)/2+px,y=(H-h)/2;
  if(s.sal){
-  const dr=(t-.5)*(md%2?-1:1);
+  const dr=s.v?0:(t-.5)*(md%2?-1:1);
   if(w>W+2){x=cl(W/2-bestWin(s.sal.col,W/w)*w,W-w);x=cl(x+dr*Math.min((w-W)*.15,120),W-w)}
   else if(h>H+2){y=cl(H/2-bestWin(s.sal.row,H/h)*h,H-h);y=cl(y+dr*Math.min((h-H)*.15,120),H-h)}
  }
@@ -446,18 +474,27 @@ function render(T){ui(T);
  cx.fillStyle='#000';cx.fillRect(0,0,W,H);cx.filter='contrast(1.06) saturate(1.1)';
  for(const i of A){const s=scenes[i],o=i?X:0;cx.globalAlpha=i?Math.min(1,(T-s.st+X)/X):1;drawM(s,Math.min(1,Math.max(0,(T-s.st+o)/(s.dur+o))),i)}
  cx.globalAlpha=1;cx.filter='none';
- scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i)&&playing&&!paused;if(on&&s.v.paused)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
+ scenes.forEach((s,i)=>{if(s.v){const on=A.includes(i)&&playing&&!paused;if(on&&s.v.paused&&!s.v.ended)s.v.play().catch(()=>{});if(!on&&!s.v.paused)s.v.pause()}});
  const g=cx.createRadialGradient(W/2,H/2,H*.45,W/2,H/2,H*.95);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');cx.fillStyle=g;cx.fillRect(0,0,W,H);
  const cur=scenes.find(s=>T>=s.st&&T<s.st+s.dur);
  if($('sub').checked&&cur){const sp=cur.a?cur.a.duration:cur.dur-.3,f=Math.max(0,(T-cur.st)/sp),ch=chunks(cur.n,isV()?24:44),tl=ch.join('').length;let ac=0,c=ch[ch.length-1]||'';for(const x of ch){ac+=x.length;if(f*tl<ac){c=x;break}}
   const fs=W>H?30:34,lh=fs*1.25;cx.font='bold '+fs+'px system-ui,sans-serif';cx.textAlign='center';const ls=wrap(c,W-160).map(l=>l.trim()),yb=W>H?($('lb').checked?596:668):H-300,y0=yb-(ls.length-1)*lh,bw=Math.max(...ls.map(l=>cx.measureText(l).width))+44;
   cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect((W-bw)/2,y0-fs,bw,ls.length*lh+12);cx.fillStyle='#fff';ls.forEach((l,k)=>cx.fillText(l,W/2,y0+k*lh))}
- if(T<5){const a=Math.max(0,Math.min(1,T/.6,(5-T)/.6));cx.globalAlpha=a;cx.font='bold '+(W>H?44:40)+'px Georgia,serif';cx.textAlign='left';const tl=wrap(title,W-180),ty=W>H?142:200;cx.fillStyle='#e8c15a';cx.fillRect(80,ty-42,6,tl.length*50-8);cx.fillStyle='#fff';tl.forEach((l,k)=>cx.fillText(l.trim(),100,ty+k*50));cx.globalAlpha=1}
  if($('lb').checked&&W>H){const bh=(H-W/2.39)/2;cx.fillStyle='#000';cx.fillRect(0,0,W,bh);cx.fillRect(0,H-bh,W,bh)}
  if(total&&T>total-1.5){cx.fillStyle=`rgba(0,0,0,${Math.min(1,(T-total+1.5)/1.5)})`;cx.fillRect(0,0,W,H)}
 }
+async function prime(){
+ const L=scenes.filter(s=>s.lazy&&s.v&&!s.v.videoWidth);
+ L.forEach(s=>{s.v.play().then(()=>s.v.pause()).catch(()=>{})});
+ await Promise.all(L.map(async s=>{
+  for(let k=0;k<30&&!s.v.videoWidth;k++)await sleep(150);
+  if(s.v.videoWidth){s.sal=sal(s.v,s.v.videoWidth,s.v.videoHeight);if(isFinite(s.v.duration)&&s.v.duration>0&&s.dur)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))}
+  else{s.v.remove();s.v=null;s.img=s.fb;s.sal=sal(s.fb,s.fb.width,s.fb.height);log('⚠ un vídeo no cargó en este móvil; uso su miniatura')}
+  s.lazy=0}));
+}
 async function run(rec,from=0){
- stopF=paused=false;playing=true;rc=rec;pl();try{navigator.audioSession.type='playback'}catch(_){}
+ stopF=paused=false;playing=true;rc=rec;pl();const pp=prime();try{navigator.audioSession.type='playback'}catch(_){}
+ await pp;
  const dest=ctx.createMediaStreamDestination(),au=new Audio();let ok=true;
  if(!rec){au.srcObject=dest.stream;ok=await Promise.race([au.play().then(()=>true,()=>false),sleep(1500).then(()=>true)])}
  await Promise.race([ctx.resume(),sleep(1500)]);total=scenes[scenes.length-1].st+scenes[scenes.length-1].dur+.5;
