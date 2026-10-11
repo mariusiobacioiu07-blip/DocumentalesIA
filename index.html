@@ -453,6 +453,7 @@ const TTS=[
   const j=await(await fj(GL+'/'+await gttsModel()+':generateContent?key='+keys.gemini,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:(v==0||v==4?'Di con tono sereno y cálido de narradora de documental: ':'Di con voz grave, pausada y envolvente de narrador de documental: ')+t}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:VO.gm[v]}}}}})})).json();
   const bin=atob(j.candidates[0].content.parts[0].inlineData.data),n=bin.length>>1,buf=ctx.createBuffer(1,n,24000),d=buf.getChannelData(0);
   for(let i=0;i<n;i++){let x=bin.charCodeAt(2*i)|bin.charCodeAt(2*i+1)<<8;if(x>32767)x-=65536;d[i]=x/32768}return buf}},
+ {id:'openai',key:'openai',f:async(t,v)=>{let er;for(const m of ['gpt-4o-mini-tts','tts-1']){try{return await ctx.decodeAudioData(await(await fj('https://api.openai.com/v1/audio/speech',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,voice:VO.pl[v],input:t,response_format:'mp3',...(m==='gpt-4o-mini-tts'?{instructions:'Narrador de documental: voz natural, cálida y pausada.'}:{})})})).arrayBuffer())}catch(x){er=x;if(!/^(400|404)/.test(x.message))throw x}}throw er}},
  {id:'pollinations',f:async(t,v)=>ctx.decodeAudioData(await(await fj('https://text.pollinations.ai/'+enc(t)+'?model=openai-audio&voice='+VO.pl[v])).arrayBuffer())}
 ];
 async function tts(t){
@@ -472,7 +473,7 @@ async function voices(){
   log('Voz: '+p.id);let ok=true,idx=0,done=0;scenes.forEach(s=>s.a=null);
   const w=async()=>{while(idx<scenes.length&&ok&&!cancel){
    const s=scenes[idx++];let a=null;
-   for(let n=0;n<3&&!a&&ok&&!cancel;n++){try{a=await p.f(s.n,v)}catch(e){if(/^(401|402|403)/.test(e.message)){ok=false}else await sleep(6000*(n+1))}}
+   for(let n=0;n<3&&!a&&ok&&!cancel;n++){try{a=await p.f(s.n,v)}catch(e){log('✗ voz '+p.id+': '+em(e));if(/^(401|402|403)/.test(e.message)){ok=false}else await sleep(6000*(n+1))}}
    if(!a){if(ok&&!cancel)log('✗ voz '+p.id+' se agotó; rehago TODAS las voces con otro proveedor para mantener la misma voz');ok=false;break}
    s.a=a;done++;prog(.6+.4*done/scenes.length);log(`voz ${done}/${scenes.length}`)}};
   await Promise.all([w(),w()]);
@@ -502,6 +503,13 @@ $('mus').onchange=async e=>{try{mAuto=false;music=e.target.files[0]?await ctx.de
 
 // ---------- Generación ----------
 let scenes=[],title='',cancel=false;
+$('cred').insertAdjacentHTML('afterend','<label style="display:block;margin-top:10px">Guion (narración)</label><textarea id="gui" readonly style="min-height:120px;font-size:12px"></textarea><button class="s" id="rv" disabled>🔁 Rehacer solo la voz</button>');
+try{$('gui').value=localStorage.getItem('vidia_gui')||''}catch(_){}
+const showGui=()=>{const t=scenes.map((s,i)=>(i+1)+'. '+s.n).join('\n');$('gui').value=title+'\n\n'+t;try{localStorage.setItem('vidia_gui',title+'\n\n'+t)}catch(_){}};
+function relayout(){let t=0;scenes.forEach(s=>{s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});return t}
+$('rv').onclick=async()=>{if(!scenes.length||$('go').disabled)return;cancel=false;$('rv').disabled=$('go').disabled=true;ctx.resume();keepOn();log('Rehaciendo solo la voz…');
+ try{const vp=await voices();if(!vp){scenes.forEach(s=>s.a=null);log('⚠ Sigue sin poder generarse la voz.')}else log('✓ Voz lista ('+vp+')');const t=relayout();log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);pos=0;render(0)}catch(e){log('❌ '+e.message)}
+ keepOff();$('go').disabled=$('rv').disabled=false};
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=topic.slice(0,60);cancel=false;ctx.resume();keepOn();
@@ -516,7 +524,7 @@ $('go').onclick=async()=>{
    arr.forEach(o=>{const c=o.c&&Array.isArray(o.c.v)?{t:String(o.c.t||'').slice(0,40),k:o.c.k==='line'?'line':'bar',l:(o.c.l||[]).map(String),v:o.c.v.map(Number).filter(isFinite)}:null;scenes.push({n:String(o.n),i:String(o.i),q:String(o.q||o.i).slice(0,60),q2:String(o.q2||'').slice(0,60),w:o.w&&o.w!=='null'?String(o.w):'',t:o.t,c:c&&c.v.length>1?c:null})});
    prog(0.2*e/total);
   }
-  log(`Guion listo: ${scenes.length} escenas. Buscando imágenes/video y generando voz…`);
+  showGui();log(`Guion listo: ${scenes.length} escenas (míralo abajo, en «Guion»). Buscando imágenes/video y generando voz…`);
   let idx=0,done=0;
   const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMedia(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
   await Promise.all([worker(),worker()]);
@@ -529,7 +537,7 @@ $('go').onclick=async()=>{
   let t=0;scenes.forEach(s=>{s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/2.6)+0.3;s.st=t;t+=s.dur;if(s.v&&isFinite(s.v.duration)&&s.v.duration>0)s.v.playbackRate=Math.max(.5,Math.min(1,s.v.duration/s.dur))});
   $('cred').value=[...new Set(scenes.map(s=>s.m.credit).filter(Boolean))].join('\n');
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
-  $('play').disabled=$('rec').disabled=$('sk').disabled=false;pos=0;render(0);
+  $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
  keepOff();$('go').disabled=false;
 };
