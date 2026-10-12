@@ -76,6 +76,7 @@ small{color:var(--mut)}
 <label class="chk"><input id="sub" type="checkbox" checked> Subtítulos</label>
 <label class="chk"><input id="kar" type="checkbox" checked> Subtítulos karaoke (resalta la palabra que suena)</label>
 <label class="chk"><input id="chk" type="checkbox" checked> La IA (Gemini, Groq, Mistral) elige la mejor imagen/vídeo</label>
+<label class="chk"><input id="lcj" type="checkbox" checked> 🧠 Juez local gratis (CLIP): lo usa cuando Gemini/Groq/etc. no tienen cuota. La primera vez descarga ~90 MB y queda en caché</label>
 <label class="chk"><input id="dir" type="checkbox" checked> 🎬 Director IA: revisa el montaje y cambia las escenas que no encajan</label>
 <label class="chk"><input id="map" type="checkbox" checked> 🗺 Mini-mapa del mundo en las escenas de lugares</label>
 <label>Estilo del guion</label><select id="sty"><option value="auto">🎯 Automático (la IA elige según tu tema)</option><option value="top">Top / ranking (cuenta atrás)</option><option value="animales">Naturaleza y animales</option><option value="espacio">Espacio y universo</option><option value="planeta">Planeta y lugares</option><option value="historia">Historia</option><option value="ciencia">Ciencia y tecnología</option><option value="biografia">Biografía</option><option value="clasico">Documental clásico (sereno)</option><option value="curiosidades">Curiosidades (dinámico)</option><option value="misterio">Misterio / true crime</option><option value="educativo">Educativo (claro)</option><option value="shorts">Shorts viral (rápido)</option></select>
@@ -410,7 +411,7 @@ async function ask(v,D,t,vid){
 }
 async function rank(s,cs){
  if(s._r||!$('chk').checked)return null;
- const J=VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length)return null;
+ const J=VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length&&!LJ.on())return null;
  const bm=await Promise.all(cs.map(async c=>{try{if(!c.prev&&c.t==='vid')return null;return await createImageBitmap(await(await fj(c.prev||c.url,{ms:20000})).blob())}catch(_){return null}})),th=[];
  bm.forEach((b,i)=>{if(!b)return;const cv=document.createElement('canvas');cv.width=384;cv.height=Math.round(384*b.height/b.width);cv.getContext('2d').drawImage(b,0,0,cv.width,cv.height);th.push({i,d:cv.toDataURL('image/jpeg',.7).split(',')[1]})});
  if(!th.length)return null;
@@ -429,7 +430,7 @@ Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto c
    else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}
   }
  }
- return null;
+ return LJ.on()?await LJ.rank(s,th,cs):null;
 }
 
 async function load(m){
@@ -471,7 +472,7 @@ async function verifyClip(s,r){
  const est=scEst(s),cl=r.cl,av=cl&&cl.segs.length?' Evita estos tramos del clip, ya usados en otras escenas (en segundos): '+cl.segs.map(x=>Math.round(x[0])+'-'+Math.round(x[1])).join(', ')+'.':'',P=ent=>`Documental sobre "${title}". Escena: locución "${s.n}". Imagen ideal: "${s.i}". Sujeto obligatorio: "${s.w||s.q}". Ves ${ent?'el clip de vídeo completo':'4 fotogramas en orden (de inicio a final) de un clip de vídeo'}. Reglas: 1) el sujeto principal debe ser el sujeto obligatorio (misma especie, lugar o época, no otra) durante la MAYOR PARTE del clip; si solo sale un instante o de fondo, no vale; 2) debe ser imagen real: rechaza animación, dibujos, 3D, ilustración, pantallas con texto o marcas de agua; 3) debe encajar con el tema de la locución: NO hace falta que se vea exactamente la acción que describe (es metraje de archivo), basta con que no la contradiga; 4) si el sujeto correcto se ve bien y es imagen real, APRUEBA; descarta solo ante un fallo claro. Formato: una línea con lo que ocurre en el clip, otra con el veredicto de cada regla y una línea "RESPUESTA: SI" o "RESPUESTA: NO".${ent?` Si es SI, añade DEBAJO dos líneas más: "INICIO: n" con el segundo del clip (número) en el que empieza la mejor porción de ${Math.round(est)} segundos para esta locución (la que mejor muestra al sujeto obligatorio, sin cortes ni planos ajenos) y "CENTRO: n" con la posición horizontal del sujeto principal en esa porción, de 0 (izquierda) a 100 (derecha).${av}`:''}`,
  vd=tx=>{const m=String(tx).replace(/<think>[\s\S]*?<\/think>/g,'').match(/RESPUESTA\s*[:=]?\s*\**\s*(S[IÍ]|NO)/i);return m?/^S/i.test(m[1]):null};
  const nj=()=>!VJ.some(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id));
- if(!VJ.some(jok)&&!nj()){const w=Math.min(65000,Math.min(...VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)).map(v=>(coolJ[v.id]||0)-Date.now())));if(w>0){log('⏳ jueces en pausa: espero '+Math.ceil(w/1000)+' s');await sleep(w+300)}}
+ if(!VJ.some(jok)&&!nj()&&!LJ.on()){const w=Math.min(65000,Math.min(...VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)).map(v=>(coolJ[v.id]||0)-Date.now())));if(w>0){log('⏳ jueces en pausa: espero '+Math.ceil(w/1000)+' s');await sleep(w+300)}}
  try{
   const mime=/^video\//.test(r.blob.type)?r.blob.type:'video/mp4',lab=o=>o===false?'NO apto':o?'apto':'sin veredicto',clean=t=>String(t).replace(/<think>[\s\S]*?<\/think>/g,'').trim();
   let vp=null;const gv=async t=>{await slot('gemini');return gem([vp||(vp={inline_data:{mime_type:mime,data:await b64(r.blob)}}),{text:t}])};
@@ -510,6 +511,7 @@ async function verifyClip(s,r){
    try{const ok=vd(await ask(v,fr,P(0)));log('👁 '+v.id+' vio '+fr.length+' fotogramas ('+(v.last||'')+') → '+(ok===false?'NO apto':ok?'apto':'sin veredicto'));if(ok!=null)return ok}
    catch(e){jfail(v,e)}
   }
+  if(LJ.on()&&fr.length){const o=await LJ.clip(s,fr);if(o!=null)return o}
  }catch(e){log('✗ verificación: '+em(e))}
  if(!nj())log('✗ ningún juez pudo verificar este clip: lo descarto');
  return nj();
@@ -529,7 +531,7 @@ async function getMedia(s,k){
    if(!cs.length)continue;
    let i=await rank(s,cs).catch(e=>{log('✗ juez: '+em(e));return null});
    // Si los jueces están en pausa por límite de uso, esperar y repetir en vez de coger la primera imagen sin revisar
-   for(let w=0;i==null&&w<2&&!s._r&&$('chk').checked;w++){
+   for(let w=0;i==null&&w<2&&JW<3&&!s._r&&$('chk').checked;w++){JW++;
     const A=VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id));if(!A.length)break;
     const ms=Math.min(65000,Math.max(0,Math.min(...A.map(v=>(coolJ[v.id]||0)-Date.now()))));
     if(ms<=0&&w>0)break;
@@ -689,7 +691,7 @@ let contR=null;
 const STY={clasico:'Estilo documental clásico: tono sereno, pausado y majestuoso.',curiosidades:'Estilo curiosidades: dinámico, frases cortas y cada escena con un dato sorprendente.',misterio:'Estilo misterio / true crime: tono grave, suspense, pistas que se van revelando y un giro final.',educativo:'Estilo educativo: claro y ordenado, con ejemplos sencillos, de lo básico a lo complejo.',shorts:'Estilo Shorts viral: ritmo muy rápido, un gancho brutal en la primera frase y un cierre que invite a volver a verlo.',top:'Estilo TOP / ranking en cuenta atrás: respeta EXACTAMENTE el número de elementos que pide el tema (por ejemplo «top 7» son siete elementos), de mayor a menor número, dejando el número uno para el final como el mejor o más impactante. Planifica la lista completa desde el principio, mantenla igual en todas las tandas y no repitas elementos. Cada elemento ocupa varias escenas seguidas, más o menos el mismo número para todos: la primera lo presenta con su número y su nombre (solo esa escena lleva el cartel «item») y las siguientes dan datos concretos, historia y un detalle sorprendente. Tono dinámico, con ganchos entre elementos.',animales:'Estilo naturaleza y animales, al modo de los grandes documentales de naturaleza: tono de asombro y respeto, con comportamiento, hábitat, adaptaciones y relaciones entre especies. Usa el nombre común y, la primera vez, el científico. Las búsquedas de imagen deben nombrar la especie concreta y su entorno, y casi todas las escenas llevan en «a» el sonido real del animal o de su hábitat.',espacio:'Estilo espacio y universo: tono de asombro, escalas y comparaciones fáciles de imaginar (distancias, tiempos, tamaños), misiones y descubrimientos reales con sus nombres, y qué sabemos y qué sigue siendo un misterio. En el espacio no hay sonido: en «a» pon null salvo en escenas en la Tierra o dentro de una nave.',planeta:'Estilo planeta Tierra y lugares: geografía, clima, paisajes, culturas y lugares concretos con su nombre y su país; cada escena ancla un lugar o fenómeno real y lo describe con detalles visuales.',historia:'Estilo historia: relato cronológico claro con personajes, causas y consecuencias; las fechas se dicen con palabras y siempre situadas en su época, y se distinguen los hechos probados de las leyendas.',ciencia:'Estilo ciencia y tecnología: explica cómo funciona algo con analogías cotidianas, del problema a la solución, con ejemplos reales y sin jerga innecesaria.',biografia:'Estilo biografía: la vida de una persona en orden narrativo (origen, obstáculos, momentos decisivos y legado), con anécdotas verificables que la humanicen.'};
 $('cont').onclick=()=>contR&&contR();
 const credits=()=>{$('cred').value=[...new Set([...scenes.map(s=>s.m&&s.m.credit),...scenes.map(s=>s.ac),mAuto&&mCred?mCred:null].filter(x=>x&&!/^(Foto|Vídeo) propi/.test(x)))].join('\n')};
-const applyM=s=>{s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;relayout();if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}credits();renderTile(scenes.indexOf(s));render(pos)};
+const applyM=s=>{try{projSaveScene(scenes.indexOf(s))}catch(_){}s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;relayout();if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}credits();renderTile(scenes.indexOf(s));render(pos)};
 $('esn').onclick=async()=>{const i=+$('esc').value,s=scenes[i];if(!s||$('go').disabled)return;$('esn').disabled=true;log('Buscando otra imagen para la escena '+(i+1)+'…');try{dropM(s);s._r=0;s.m=await getMediaFull(s,i+Date.now()%1000);applyM(s);log('✓ Escena '+(i+1)+' cambiada: '+(s.m.credit||'imagen IA'))}catch(e){log('❌ '+e.message)}$('esn').disabled=false};
 $('esu').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{const im=await createImageBitmap(f);dropM(s);s.m={img:im,credit:'Foto propia'};applyM(s);log('✓ Escena '+(i+1)+': tu foto')}catch(er){log('❌ No pude leer esa foto')}e.target.value=''};
 $('esv').onchange=async e=>{const f=e.target.files[0],i=+$('esc').value,s=scenes[i];if(!f||!s)return;try{log('Cargando tu vídeo…');const r=await vidFromBlob(f,{credit:'Vídeo propio'});r.vs=Math.max(0,+$('esvs').value||0);delete r.blob;dropM(s);s.m=r;applyM(s);log('✓ Escena '+(i+1)+': tu vídeo (desde el segundo '+r.vs+')')}catch(er){log('❌ No pude leer ese vídeo: '+em(er))}e.target.value=''};
@@ -940,7 +942,7 @@ function drawM(s,t,i){
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=cleanTitle(topic).slice(0,60);cancel=false;ctx.resume();keepOn();
- $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS,strikeS].forEach(o=>{for(const k in o)delete o[k]});prog(0);
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();JW=0;for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS,strikeS].forEach(o=>{for(const k in o)delete o[k]});prog(0);
   const words=wcount(topic);let mode=$('nmode').value;if(mode==='auto')mode=words>=20?'guion':'tema';
   title=cleanTitle(mode==='tema'?topic:topic.split(/(?<=[.!?])\s|\n/)[0]).slice(0,60);
   log('📝 Modo del texto: '+({guion:'has puesto tu narración: se usa EXACTAMENTE como la escribiste, la IA solo pone voz, imágenes y efectos',tema:'solo un tema: la IA escribe la narración'})[mode]+(mode!==$('nmode').value&&$('nmode').value==='auto'?' (automático; cámbialo en «Mi texto es…» si no es lo que querías)':''));
@@ -1008,6 +1010,7 @@ $('go').onclick=async()=>{
   scenes.forEach(s=>{if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}});credits();
   buildBoard();$('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));$('esn').disabled=$('mt').disabled=$('th').disabled=false;$('ncp').disabled=$('ntx').disabled=$('nsr').disabled=false;
   log(`✅ Listo (${Math.round(t/60*10)/10} min). Reproduce o exporta.`);
+  projSave();
   $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;pos=0;render(0);
  }catch(e){log('❌ '+e.message)}
  keepOff();$('go').disabled=false;
@@ -1295,6 +1298,129 @@ $('sk').oninput=()=>{drag=true;const t=$('sk').value/1000*DUR();$('tm').textCont
 $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();pos=t;if(playing){seekT=t;stopF=true}else render(t)};
 $('rec').onclick=()=>{if(recBusy||rc||playing){log('Ya hay una reproducción o grabación en curso. Pulsa ■ Parar si quieres cancelarla.');return}$('rec').disabled=true;log('Grabando… dura lo mismo que el vídeo. NO cierres ni cambies de app ni bloquees la pantalla hasta que termine.');run(true).then(()=>{if(!recBusy)log('Fin de la exportación: si hay vídeo, pulsa «Guardar vídeo» debajo del botón de exportar.')})};
 $('stop').onclick=()=>{keepOff();contR&&contR();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
+
+// ---------- Juez local gratis: CLIP en el navegador (sin claves ni cuotas) ----------
+// Compara cada imagen con la descripción de la escena. Solo entra cuando los jueces en la nube no pueden. Si falla la descarga, la app sigue como antes.
+const LJ={st:0,thr:.2,pr:null,fails:0,
+ on(){const e=$('lcj');return !!e&&e.checked&&this.st!==-1},
+ async init(){
+  if(this.st===2)return true;if(this.st===-1)return false;if(this.pr)return this.pr;
+  this.pr=(async()=>{try{
+   log('🧠 Cargando el juez local (CLIP). La primera vez descarga ~90 MB; luego queda en caché…');
+   const T=await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm');T.env.allowLocalModels=false;
+   const M='Xenova/clip-vit-base-patch32';this.T=T;
+   this.tok=await T.AutoTokenizer.from_pretrained(M);this.tm=await T.CLIPTextModelWithProjection.from_pretrained(M);
+   this.proc=await T.AutoProcessor.from_pretrained(M);this.vm=await T.CLIPVisionModelWithProjection.from_pretrained(M);
+   this.st=2;log('🧠 Juez local listo.');return true
+  }catch(e){this.st=-1;this.pr=null;log('ℹ Juez local no disponible ('+em(e)+'): sigo sin él.');return false}})();
+  return this.pr},
+ nz(a){let n=0;for(let i=0;i<a.length;i++)n+=a[i]*a[i];n=Math.sqrt(n)||1;const o=new Float32Array(a.length);for(let i=0;i<a.length;i++)o[i]=a[i]/n;return o},
+ dot(a,b){let x=0;for(let i=0;i<a.length;i++)x+=a[i]*b[i];return x},
+ async text(strs){const o=await this.tm(this.tok(strs,{padding:true,truncation:true})),D=o.text_embeds.dims[1],d=o.text_embeds.data;return strs.map((_,i)=>this.nz(d.slice(i*D,(i+1)*D)))},
+ async imgs(b64s){const r=[];for(const b of b64s){const im=await this.T.RawImage.read('data:image/jpeg;base64,'+b),o=await this.vm(await this.proc(im));r.push(this.nz(o.image_embeds.data))}return r},
+ txts(s){return [s.i,s.w||s.q].filter(Boolean).map(x=>String(x).slice(0,200))},
+ async scores(s,b64s,T){const te=await this.text(T||this.txts(s)),ie=await this.imgs(b64s);return ie.map(e=>te.reduce((a,t)=>a+this.dot(e,t),0)/te.length)},
+ async rank(s,th,cs){
+  try{if(!(await this.init()))return null;const sub=th.slice(0,9);if(!sub.length||!this.txts(s).length)return null;
+   const sc=await this.scores(s,sub.map(x=>x.d));let b=0;sc.forEach((v,i)=>{if(v>sc[b])b=i});const ok=sc[b]>=this.thr;
+   log('🧠 juez local: '+sc.map(x=>x.toFixed(2)).join(' ')+' → '+(ok?'imagen '+b:'ninguna encaja (mínimo '+this.thr+')'));this.fails=0;
+   return ok?sub[b].i:-1
+  }catch(e){log('ℹ juez local falló: '+em(e));if(++this.fails>=3)this.st=-1;return null}},
+ async clip(s,frs){
+  try{if(!(await this.init())||!frs.length||!this.txts(s).length)return null;
+   const sc=await this.scores(s,frs),m=sc.reduce((a,x)=>a+x,0)/sc.length,ok=m>=this.thr;
+   log('🧠 juez local vio '+frs.length+' fotogramas ('+sc.map(x=>x.toFixed(2)).join(' ')+') → '+(ok?'apto':'NO apto'));this.fails=0;return ok
+  }catch(e){log('ℹ juez local falló: '+em(e));if(++this.fails>=3)this.st=-1;return null}}
+};
+$('stop').insertAdjacentHTML('afterend','<button class="s" id="ljt" type="button">🧪 Probar juez local</button>');
+$('ljt').onclick=async()=>{
+ $('ljt').disabled=true;
+ try{LJ.st=0;if(!(await LJ.init())){alert('No se pudo cargar el juez local. Mira el registro.');return}
+  const c=document.createElement('canvas');c.width=c.height=224;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,224,224);x.fillStyle='#d22';x.beginPath();x.arc(112,112,70,0,7);x.fill();
+  const T=['a photo of a red circle on a white background','a photo of a mountain landscape','a photo of a factory assembly line'],b=c.toDataURL('image/jpeg',.9).split(',')[1],te=await LJ.text(T),ie=await LJ.imgs([b]),sc=te.map(t=>LJ.dot(ie[0],t));
+  alert('Juez local: '+(sc[0]>sc[1]&&sc[0]>sc[2]?'OK ✅':'resultado raro ⚠')+'\nCírculo rojo ↔ «círculo rojo»: '+sc[0].toFixed(3)+'\n↔ «montaña»: '+sc[1].toFixed(3)+'\n↔ «cadena de montaje»: '+sc[2].toFixed(3));
+ }catch(e){alert('Falló la prueba: '+em(e))}
+ $('ljt').disabled=false};
+
+// ---------- Guardado del proyecto en el navegador (IndexedDB) ----------
+// Guarda escenas, imágenes, clips, voz y música al terminar la generación, para poder recuperarlos si se cierra la app o se cuelga.
+const PDB={db:null,
+ open(){return this.db||(this.db=new Promise((res,rej)=>{const r=indexedDB.open('vidia_proj',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error||new Error('IndexedDB no disponible'))}))},
+ async tx(mode,f){const db=await this.open();return new Promise((res,rej)=>{let q;try{const t=db.transaction('kv',mode);q=f(t.objectStore('kv'));t.oncomplete=()=>res(q&&'result' in q?q.result:undefined);t.onerror=t.onabort=()=>rej(t.error||new Error('IndexedDB: error al guardar (¿sin espacio?)'))}catch(e){rej(e)}})},
+ put(k,v){return this.tx('readwrite',st=>st.put(v,k))},get(k){return this.tx('readonly',st=>st.get(k))},del(k){return this.tx('readwrite',st=>st.delete(k))},keys(){return this.tx('readonly',st=>st.getAllKeys())}};
+const PUI=['topic','nmode','min','lang','voice','vis','fmt','vmode','wps','res','fit','amb','mvol','avol','intro','outro','lb','pv','sub','kar','chk','lcj','dir','map','sty','rules','dgv','wiki'];
+const readUI=()=>{const o={};PUI.forEach(id=>{const e=$(id);if(e)o[id]=e.type==='checkbox'?e.checked:e.value});return o};
+const applyUI=o=>{PUI.forEach(id=>{const e=$(id);if(e&&o&&id in o){if(e.type==='checkbox')e.checked=!!o[id];else e.value=o[id]}});try{setFmt()}catch(_){}};
+const abPack=b=>{if(!b)return null;const ch=[];for(let c=0;c<b.numberOfChannels;c++){const f=b.getChannelData(c),o=new Int16Array(f.length);for(let i=0;i<f.length;i++){const x=Math.max(-1,Math.min(1,f[i]));o[i]=x<0?x*32768:x*32767}ch.push(o)}return{sr:b.sampleRate,ch,al:b.al||null}};
+const abUnpack=p=>{if(!p||!p.ch||!p.ch.length)return null;const n=p.ch[0].length,b=ctx.createBuffer(p.ch.length,n,p.sr);p.ch.forEach((o,c)=>{const f=b.getChannelData(c);for(let i=0;i<n;i++)f[i]=o[i]/32768});if(p.al)b.al=p.al;return b};
+const bmBlob=bm=>new Promise(r=>{try{const c=document.createElement('canvas');c.width=bm.width;c.height=bm.height;c.getContext('2d').drawImage(bm,0,0);c.toBlob(b=>r(b),'image/jpeg',.93)}catch(_){r(null)}});
+async function mPack(o,credit,uk,gen,done){
+ if(!o)return null;const r={credit:credit||'',vs:o.vs||0,fx:o.fx==null?null:o.fx,lazy:o.lazy?1:0};
+ if(o.img)r.img=await bmBlob(o.img);if(o.fb)r.fb=await bmBlob(o.fb);
+ if(o.v&&o.v.src){
+  if(uk&&done.has(uk))r.vk=uk;
+  else{let b=null;try{b=await(await fetch(o.v.src)).blob()}catch(_){}
+   if(b){if(uk){await PDB.put(gen+':clip:'+uk,b);done.add(uk);r.vk=uk}else r.vid=b}}}
+ return r}
+async function scPack(s,gen,done){
+ const o={},skip=['m','alt','v','img','fb','sal','a','ab','_rej','lazy','st','dur','vs','fx'];
+ for(const k in s){if(skip.includes(k))continue;const v=s[k];if(v==null||typeof v==='function')continue;if(typeof v==='object'&&!Array.isArray(v)&&v.constructor!==Object)continue;try{o[k]=JSON.parse(JSON.stringify(v))}catch(_){}}
+ o.__m=await mPack(s,s.m&&s.m.credit,s.m&&s.m.uk,gen,done);
+ o.__alt=s.alt?await mPack(s.alt,s.alt.credit,s.alt.uk,gen,done):null;
+ o.__a=abPack(s.a);o.__ab=abPack(s.ab);return o}
+async function mUnpack(r,gen){
+ if(!r)return null;const o={credit:r.credit,vs:r.vs||0,fx:r.fx==null?undefined:r.fx,lazy:r.lazy?1:0};
+ if(r.img){o.img=await createImageBitmap(r.img);o.sal=sal(o.img,o.img.width,o.img.height)}
+ if(r.fb)o.fb=await createImageBitmap(r.fb);
+ let vb=r.vid;if(!vb&&r.vk)vb=await PDB.get(gen+':clip:'+r.vk);
+ if(vb){try{const x=await vidFromBlob(vb,{credit:r.credit,prev:r.fb?URL.createObjectURL(r.fb):undefined});o.v=x.v;o.lazy=x.lazy||0;if(x.fb&&!o.fb)o.fb=x.fb;if(!o.sal)o.sal=x.sal}catch(e){log('ℹ un clip no se pudo recuperar, uso su imagen: '+em(e))}}
+ return o}
+let JW=0;
+let PGEN=null,PSAVING=false,PQ=null;
+async function projDel(gen){try{for(const k of await PDB.keys())if(String(k).startsWith(gen+':'))await PDB.del(k)}catch(_){}}
+async function projSave(manual){
+ if(!scenes.length||!scenes[0].m||PSAVING)return;PSAVING=true;
+ try{
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(_){}
+  const gen='g'+Date.now(),old=PGEN,done=new Set();log('💾 Guardando el proyecto en este navegador…');
+  for(let i=0;i<scenes.length;i++){await PDB.put(gen+':s:'+i,await scPack(scenes[i],gen,done))}
+  await PDB.put(gen+':music',abPack(music));
+  await PDB.put('last',{gen,t:Date.now(),title,n:scenes.length,autoSty,VB,VBI,mAuto,mReal,mCred,ui:readUI(),v:1});
+  PGEN=gen;if(old&&old!==gen)await projDel(old);
+  log('💾 Proyecto guardado ('+scenes.length+' escenas). Si cierras o recargas, al volver verás «Recuperar proyecto».')
+ }catch(e){log('⚠ No pude guardar el proyecto: '+em(e)+(/quota|espacio/i.test(String(e&&e.message))?' (el navegador no tiene espacio)':''))}
+ finally{PSAVING=false}}
+function projSaveScene(i){ // guarda solo la escena cambiada (tras «otras opciones», tu foto, etc.)
+ if(!PGEN||i<0||PSAVING)return;clearTimeout(PQ);PQ=setTimeout(async()=>{const s=scenes[i];if(!s||!s.m||PSAVING)return;try{await PDB.put(PGEN+':s:'+i,await scPack(s,PGEN,new Set()))}catch(_){}},4000)}
+async function projLoad(){
+ const meta=await PDB.get('last');if(!meta||!meta.gen)throw new Error('No hay proyecto guardado');
+ $('go').disabled=true;log('📂 Recuperando «'+meta.title+'» ('+meta.n+' escenas)…');
+ applyUI(meta.ui);title=meta.title;autoSty=meta.autoSty||'';VB=meta.VB||'';VBI=meta.VBI||'';mAuto=!!meta.mAuto;mReal=!!meta.mReal;mCred=meta.mCred||'';
+ music=abUnpack(await PDB.get(meta.gen+':music'));
+ const arr=new Array(meta.n);
+ for(let a=0;a<meta.n;a+=4){await Promise.all([...Array(Math.min(4,meta.n-a)).keys()].map(async j=>{
+  const i=a+j,raw=await PDB.get(meta.gen+':s:'+i);if(!raw)throw new Error('Falta la escena '+(i+1)+' en el proyecto guardado');
+  const s={};for(const k in raw)if(!k.startsWith('__'))s[k]=raw[k];
+  s.a=abUnpack(raw.__a);s.ab=abUnpack(raw.__ab);const m=(await mUnpack(raw.__m,meta.gen))||{credit:''};m.alt=await mUnpack(raw.__alt,meta.gen);
+  if(raw.__m&&raw.__m.vk)m.uk=raw.__m.vk;s.m=m;arr[i]=s}));prog(0.1+0.8*Math.min(1,(a+4)/meta.n))}
+ scenes=arr;PGEN=meta.gen;
+ let t=INTRO();scenes.forEach(s=>{s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});
+ scenes.forEach(s=>{if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}});credits();
+ if($('map').checked&&scenes.some(s=>s.g))try{await loadWorld()}catch(_){}
+ showGui();buildBoard();$('esc').replaceChildren(...scenes.map((s,i)=>new Option((i+1)+'. '+s.n.slice(0,40),i)));
+ $('esn').disabled=$('mt').disabled=$('th').disabled=false;$('ncp').disabled=$('ntx').disabled=$('nsr').disabled=false;
+ $('play').disabled=$('rec').disabled=$('sk').disabled=$('rv').disabled=false;$('go').disabled=false;prog(1);pos=0;render(0);
+ log('✅ Proyecto recuperado ('+Math.round(t/60*10)/10+' min). Ya puedes reproducir o exportar sin gastar cuota.')}
+$('stop').insertAdjacentHTML('afterend','<button class="s" id="psv" type="button">💾 Guardar proyecto ahora</button>');
+$('psv').onclick=()=>{if(!scenes.length||!scenes[0].m){log('Aún no hay proyecto que guardar.');return}if(recBusy||rc){log('Espera a que termine la exportación.');return}projSave(true)};
+(async()=>{try{
+ const meta=await PDB.get('last');if(!meta||!meta.gen)return;PGEN=meta.gen;
+ const d=document.createElement('div');d.className='card';d.id='rcv';d.style.borderColor='var(--ac)';
+ d.innerHTML='<b>📂 Proyecto guardado: «'+escH(meta.title||'sin título')+'»</b><br><small>'+meta.n+' escenas · '+new Date(meta.t).toLocaleString('es-ES')+'</small><br><button id="rcvOk" type="button">Recuperar proyecto</button><button class="s" id="rcvNo" type="button">Descartar</button>';
+ document.body.insertBefore(d,document.body.firstElementChild.nextSibling);
+ $('rcvOk').onclick=async()=>{$('rcvOk').disabled=true;try{await projLoad();d.remove()}catch(e){log('❌ No pude recuperar el proyecto: '+em(e));$('rcvOk').disabled=false;$('go').disabled=false}};
+ $('rcvNo').onclick=async()=>{if(!confirm('¿Borrar el proyecto guardado? No se puede deshacer.'))return;await projDel(meta.gen);try{await PDB.del('last')}catch(_){}PGEN=null;d.remove()};
+}catch(_){}})();
 
 $('diag').onclick=async()=>{
  const r=[];
