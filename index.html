@@ -1301,7 +1301,7 @@ $('stop').onclick=()=>{keepOff();contR&&contR();stopF=true;cancel=true;log('Dete
 
 // ---------- Juez local gratis: CLIP en el navegador (sin claves ni cuotas) ----------
 // Compara cada imagen con la descripción de la escena. Solo entra cuando los jueces en la nube no pueden. Si falla la descarga, la app sigue como antes.
-const LJ={st:0,thr:.2,pr:null,fails:0,
+const LJ={st:0,thr:.25,pr:null,fails:0,
  on(){const e=$('lcj');return !!e&&e.checked&&this.st!==-1},
  async init(){
   if(this.st===2)return true;if(this.st===-1)return false;if(this.pr)return this.pr;
