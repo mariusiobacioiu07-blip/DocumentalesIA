@@ -138,6 +138,9 @@ const LIST={groq:'https://api.groq.com/openai/v1/models',cerebras:'https://api.c
 const PREF={groq:/llama.*70b|gpt-oss|llama/,cerebras:/llama|gpt-oss|qwen/,mistral:/mistral-(small|medium|large)-latest/,openrouter:/llama|gemma|qwen|mistral|gpt-oss/};
 const BADM=/whisper|guard|embed|tts|vision|moderation|image|audio|safeguard|ocr/i;
 const GL='https://generativelanguage.googleapis.com/v1beta/models';
+// Cuota por modelo: si un modelo da 429 se aparta un rato (cada fallo seguido lo aparta más) y se prueba el siguiente
+const mCool={},mFl={},mUp=k=>!(mCool[k]>Date.now()),noCred=m=>/no credits remaining|insufficient_quota|credit balance/i.test(String(m));
+const mBad=(k,e)=>{const m=String((e&&e.message)||e);if(!/^429/.test(m))return;const t=Date.now(),f=mFl[k]||{n:0,t:0};f.n=t-f.t>35*60000?1:f.n+1;f.t=t;mFl[k]=f;mCool[k]=t+Math.min(30*60000,60000*Math.pow(2,f.n-1))};
 async function models(p){
  if(p.ms)return p.ms;
  let ms=[p.model];
@@ -167,6 +170,7 @@ async function gttsModel(){
 async function callLLM(p,prompt,temp){
  let err;
  for(const m of await models(p)){
+  const k=p.id+':'+m;if(!mUp(k))continue;
   try{
    if(p.type==='openai'){
     const j=await(await fj(p.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,input:prompt,store:false})})).json();
@@ -179,9 +183,9 @@ async function callLLM(p,prompt,temp){
    const h={'Content-Type':'application/json'};if(keys[p.id])h.Authorization='Bearer '+keys[p.id];
    const j=await(await fj(p.url,{method:'POST',headers:h,body:JSON.stringify({model:m,messages:[{role:'user',content:prompt}],temperature:temp==null?0.8:temp})})).json();
    return j.choices[0].message.content;
-  }catch(e){err=e;if(!/^(404|400|429|5\d\d)/.test(e.message))throw e}
+  }catch(e){err=e;if(noCred(e.message))throw new Error('402 '+p.name+' sin crédito: '+em(e));mBad(k,e);if(!/^(404|400|429|5\d\d)/.test(e.message))throw e}
  }
- throw err;
+ throw err||new Error('429 '+p.name+': todos sus modelos están sin cuota por ahora');
 }
 async function llm(prompt,temp){
  for(const p of LLMS){
@@ -289,10 +293,6 @@ const STOCK=[
   const a=(await Promise.all(((j.response||{}).docs||[]).slice(0,4).map(async d=>{try{const m=await(await fj('https://archive.org/metadata/'+d.identifier)).json(),f=(m.files||[]).filter(x=>/\.mp4$/i.test(x.name)&&+x.size>3e5&&+x.size<=10e6).sort((x,y)=>y.size-x.size)[0];
    return f&&{t:'vid',url:'https://archive.org/download/'+d.identifier+'/'+enc(f.name),prev:'https://archive.org/services/img/'+d.identifier,credit:'Internet Archive – '+String(d.title||d.identifier).slice(0,50)+' (dominio público)'}}catch(_){return null}}))).filter(Boolean);
   return a.length?pick(a):null}},
- {id:'met',f:async q=>{
-  const j=await(await fj('https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&isPublicDomain=true&q='+enc(q))).json();
-  const a=(await Promise.all((j.objectIDs||[]).slice(0,4).map(async id=>{try{const o=await(await fj('https://collectionapi.metmuseum.org/public/collection/v1/objects/'+id)).json();return o.isPublicDomain&&o.primaryImage&&{t:'img',url:o.primaryImage,prev:o.primaryImageSmall||o.primaryImage,credit:'The Met – '+String(o.title||'').slice(0,50)+' (dominio público)'}}catch(_){return null}}))).filter(Boolean);
-  return a.length?pick(a):null}},
  {id:'artic',f:async q=>{
   const j=await(await fj('https://api.artic.edu/api/v1/artworks/search?limit=8&fields=id,title,image_id&query[term][is_public_domain]=true&q='+enc(q))).json();
   const a=(j.data||[]).filter(d=>d.image_id).map(d=>({t:'img',url:'https://www.artic.edu/iiif/2/'+d.image_id+'/full/1200,/0/default.jpg',prev:'https://www.artic.edu/iiif/2/'+d.image_id+'/full/400,/0/default.jpg',credit:'Art Institute of Chicago – '+String(d.title||'').slice(0,50)+' (dominio público)'}));
@@ -322,7 +322,7 @@ const STOCK=[
   const a=(await Promise.all(((j.response||{}).docs||[]).slice(0,4).map(async d=>{try{const m=await(await fj('https://archive.org/metadata/'+d.identifier)).json(),f=(m.files||[]).filter(x=>/jpe?g/i.test(x.format||'')&&+x.size>5e4&&+x.size<=6e6).sort((x,y)=>y.size-x.size)[0];
    return f&&{t:'img',url:'https://archive.org/download/'+d.identifier+'/'+enc(f.name),prev:'https://archive.org/services/img/'+d.identifier,credit:'Internet Archive – '+String(d.title||d.identifier).slice(0,50)+' (sin restricciones conocidas)'}}catch(_){return null}}))).filter(Boolean);
   return a.length?pick(a):null}},
- {id:'smithsonian',f:async q=>{
+ {id:'smithsonian',key:'smithsonian',f:async q=>{
   const j=await(await fj('https://api.si.edu/openaccess/api/v1.0/search?rows=8&api_key='+(keys.smithsonian||'DEMO_KEY')+'&q='+enc(q+' AND online_media_type:Images AND unit_code:(NMNH OR NASM OR SAAM OR NPG OR FSG OR CHNDM)'))).json();
   const a=((j.response||{}).rows||[]).map(r=>{const d=(r.content||{}).descriptiveNonRepeating||{},m=((d.online_media||{}).media||[]).find(x=>x.type==='Images'&&x.content&&(!x.usage||x.usage.access==='CC0'));return m&&{t:'img',url:m.content,prev:m.thumbnail,credit:'Smithsonian – '+String(d.title&&d.title.content||'').slice(0,50)+' (CC0)'}}).filter(Boolean);
   return a.length?pick(a):null}},
@@ -360,14 +360,21 @@ const VJ=[
  {id:'groq',max:3,re:/llama-4|scout|maverick|vision|-vl\b|-vl-|qwen\/qwen3\.[6-9]|qwen\/qwen[4-9]/,mt:1200,url:'https://api.groq.com/openai/v1/chat/completions'},
  {id:'mistral',max:4,re:/pixtral|mistral-(small|medium|large)-latest/,url:'https://api.mistral.ai/v1/chat/completions'},
  {id:'openai',max:5},
- {id:'openrouter',max:4,re:/./,vf:m=>/:free$/.test(m.id)&&((m.architecture||{}).input_modalities||[]).includes('image'),url:'https://openrouter.ai/api/v1/chat/completions'},
- {id:'pollinations',nokey:1,max:4,fixed:['openai'],url:'https://text.pollinations.ai/openai'}
+ {id:'openrouter',max:4,re:/./,vf:m=>/:free$/.test(m.id)&&((m.architecture||{}).input_modalities||[]).includes('image'),url:'https://openrouter.ai/api/v1/chat/completions'}
 ];
+let oaJ;
+async function oaModels(){ // modelos de OpenAI para juzgar imágenes: primero los más baratos (nano, mini), luego los grandes
+ if(oaJ)return oaJ;
+ try{const j=await(await fj('https://api.openai.com/v1/models',{headers:{Authorization:'Bearer '+keys.openai}})).json(),v=n=>parseFloat((n.match(/gpt-([\d.]+)/)||[0,0])[1]);
+  oaJ=(j.data||[]).map(m=>m.id).filter(i=>/^gpt-[\d.]+/.test(i)&&!/audio|realtime|image|tts|transcribe|search|codex|instruct|chat-latest|embed|moderation|\d{4}-\d{2}-\d{2}$/.test(i)).sort((a,b)=>{const c=n=>/nano/.test(n)?0:/mini/.test(n)?1:2;return c(a)-c(b)||v(b)-v(a)}).slice(0,8)}catch(_){}
+ if(!oaJ||!oaJ.length)oaJ=[LLMS[0].okm||LLMS[0].model];
+ return oaJ;
+}
 let gJ;
 async function gjModels(){ // todos los modelos Gemini con visión disponibles: flash y lite primero (más cuota), luego pro
  if(gJ)return gJ;
  try{const j=await(await fj(GL+'?pageSize=200&key='+keys.gemini)).json(),v=n=>parseFloat((n.match(/gemini-([\d.]+)/)||[0,0])[1]);
-  gJ=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-(flash|pro)/.test(m.name)&&!/tts|image|embed|audio|live|native|robotics|computer|thinking/i.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>{const c=n=>/lite/.test(n)?2:/pro/.test(n)?1:0;return c(a)-c(b)||v(b)-v(a)}).slice(0,10)}catch(_){}
+  gJ=j.models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini-[\d.]+-(flash|pro)/.test(m.name)&&!/tts|image|embed|audio|live|native|robotics|computer|thinking/i.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>{const c=n=>/lite/.test(n)?0:/pro/.test(n)?2:1;return c(a)-c(b)||v(b)-v(a)}).slice(0,10)}catch(_){}
  if(!gJ||!gJ.length)gJ=[...await models(LLMS[0])];
  return gJ;
 }
@@ -376,16 +383,24 @@ async function ask(v,D,t,vid){
  if(v.id==='gemini'){
   let er;
   for(const m of await gjModels()){
+   const k='g:'+m;if(!mUp(k))continue;
    try{
     const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[...D.flatMap((d,i)=>[{text:'Imagen '+i+':'},{inline_data:{mime_type:'image/jpeg',data:d}}]),{text:t}]}]})})).json();
     v.last=m;return j.candidates[0].content.parts[0].text;
-   }catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
+   }catch(e){er=e;mBad(k,e);if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
-  throw er||new Error('503 sin respuesta');
+  throw er||new Error('429 todos los modelos de Gemini están sin cuota por ahora');
  }
  if(v.id==='openai'){
-  const L=LLMS[0],m=L.okm||L.model,j=await(await fj(L.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,store:false,input:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'input_text',text:'Imagen '+i+':'},{type:'input_image',image_url:'data:image/jpeg;base64,'+d}]),{type:'input_text',text:t}]}]})})).json();
-  const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');v.last=m;return tx;
+  const L=LLMS[0];let er;
+  for(const m of await oaModels()){
+   const k='o:'+m;if(!mUp(k))continue;
+   try{
+    const j=await(await fj(L.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+keys.openai},body:JSON.stringify({model:m,store:false,input:[{role:'user',content:[...D.flatMap((d,i)=>[{type:'input_text',text:'Imagen '+i+':'},{type:'input_image',image_url:'data:image/jpeg;base64,'+d}]),{type:'input_text',text:t}]}]})})).json();
+    const tx=j.output_text||(j.output||[]).flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('');if(!tx)throw new Error('500 respuesta vacía');v.last=m;return tx;
+   }catch(e){er=e;const msg=String((e&&e.message)||e);if(noCred(msg))throw new Error('402 OpenAI sin crédito: '+msg.slice(0,80));mBad(k,e);if(!/^(404|400|429|5\d\d)/.test(msg))throw e}
+  }
+  throw er||new Error('429 todos los modelos de OpenAI están sin cuota por ahora');
  }
  if(v.nm)throw new Error('404 sin modelo de visión');
  if(!v.ms){
@@ -400,18 +415,20 @@ async function ask(v,D,t,vid){
  const h={'Content-Type':'application/json'};if(keys[v.id])h.Authorization='Bearer '+keys[v.id];
  let er;
  for(const m of v.ms){
+  const k=v.id+':'+m;if(!mUp(k))continue;
   for(const x of (v.mt?[{reasoning_effort:'none'},{}]:[{}])){
    try{
     const j=await(await fj(v.url,{method:'POST',headers:h,body:JSON.stringify({model:m,temperature:0,max_tokens:v.mt||600,...x,messages:[{role:'user',content:[...(vid?[{type:'video_url',video_url:{url:vid}}]:D.flatMap((d,i)=>[{type:'text',text:'Imagen '+i+':'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+d}}])),{type:'text',text:t}]}]})})).json();
     v.last=m;return j.choices[0].message.content;
-   }catch(e){er=e;if(!/^(404|400|422|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
+   }catch(e){er=e;mBad(k,e);if(!/^(403|404|400|422|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}
   }
  }
- throw er||new Error('404 sin modelo de visión');
+ throw er||new Error('429 todos los modelos de '+v.id+' están sin cuota por ahora');
 }
 async function rank(s,cs){
- if(s._r||!$('chk').checked)return null;
- const J=VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length&&!LJ.on())return null;
+ s._jby='';s._lsc=null;
+ if(!$('chk').checked||(s._r&&!LJ.on()))return null;
+ const J=s._r?[]:VJ.filter(v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now()));if(!J.length&&!LJ.on())return null;
  const bm=await Promise.all(cs.map(async c=>{try{if(!c.prev&&c.t==='vid')return null;return await createImageBitmap(await(await fj(c.prev||c.url,{ms:20000})).blob())}catch(_){return null}})),th=[];
  bm.forEach((b,i)=>{if(!b)return;const cv=document.createElement('canvas');cv.width=384;cv.height=Math.round(384*b.height/b.width);cv.getContext('2d').drawImage(b,0,0,cv.width,cv.height);th.push({i,d:cv.toDataURL('image/jpeg',.7).split(',')[1]})});
  if(!th.length)return null;
@@ -423,14 +440,14 @@ Formato: una línea por imagen "N: qué se ve; ¿foto o vídeo real?; ¿sujeto c
   try{
    const tx=String(await ask(v,sub.map(x=>x.d),t)).replace(/<think>[\s\S]*?<\/think>/g,''),rm=tx.match(/RESPUESTA\s*[:=]?\s*\**\s*(-?\d+)/i),n=parseInt(rm?rm[1]:tx.match(/-?\d+/g).pop());
    log('✓ juez '+v.id+(v.last?' ('+v.last+')':'')+' → '+(n<0?'ninguna encaja':'imagen '+n));
-   if(n<0)return -1;if(sub[n])return sub[n].i;
+   if(n<0)return -1;if(sub[n]){s._jby=v.id+(v.last?' ('+v.last+')':'');return sub[n].i}
   }catch(e){
    const m=String((e&&e.message)||e);
    if(/^(429|5\d\d)|Load failed|Failed to fetch|NetworkError/i.test(m)){coolJ[v.id]=Date.now()+(/^(429|5\d\d)/.test(m)?60000:20000);log('⏳ juez '+v.id+': límite o red, paso al siguiente ('+em(e)+')')}
    else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}
   }
  }
- return LJ.on()?await LJ.rank(s,th,cs):null;
+ return LJ.on()?await LJ.rank(s,th,cs,!!s._r):null;
 }
 
 async function load(m){
@@ -458,7 +475,7 @@ async function vidFromBlob(b,m){
 const jok=v=>(keys[v.id]||v.nokey)&&!deadJ.has(v.id)&&!(coolJ[v.id]>Date.now());
 function jfail(v,e){const m=String((e&&e.message)||e);if(/^(429|5\d\d)|Load failed|Failed to fetch|NetworkError/i.test(m)){coolJ[v.id]=Date.now()+(/^(429|5\d\d)/.test(m)?60000:20000);log('⏳ juez '+v.id+': límite o red ('+em(e)+')')}else{log('✗ juez '+v.id+': '+em(e));v.f=(v.f||0)+1;if(/^(401|402|403|404)/.test(m)||v.f>=3)deadJ.add(v.id)}}
 const b64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b)});
-async function gem(parts){let er;for(const m of await gjModels()){try{const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})})).json();VJ[0].last=m;return j.candidates[0].content.parts[0].text}catch(e){er=e;if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}}throw er||new Error('503 sin respuesta')}
+async function gem(parts){let er;for(const m of await gjModels()){const k='g:'+m;if(!mUp(k))continue;try{const j=await(await fj(`${GL}/${m}:generateContent?key=${keys.gemini}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}]})})).json();VJ[0].last=m;return j.candidates[0].content.parts[0].text}catch(e){er=e;mBad(k,e);if(!/^(404|400|429|5\d\d)/.test(String((e&&e.message)||e)))throw e}}throw er||new Error('429 todos los modelos de Gemini están sin cuota por ahora')}
 async function frames(v){ // 4 fotogramas (10%, 35%, 65%, 90%) del clip, si el navegador puede decodificarlo
  const o=[];try{
   if(!v||!v.videoWidth||!isFinite(v.duration)||v.duration<=0)return o;
@@ -506,6 +523,7 @@ async function verifyClip(s,r){
   // 3) Gemini no dio veredicto (sin cuota, clip grande…): decide Groq con fotogramas
   const gr=await groq();if(gr&&gr.ok!=null)return gr.ok;
   fr=await getFr();
+  if(!fr.length&&LJ.on()&&r.fb){const o=await LJ.clip(s,[bmB64(r.fb)]);if(o!=null){log('🧠 clip pendiente de cargar: lo juzgo por su miniatura');return o}}
   if(!fr.length){log('✗ no pude verificar este clip (grande o sin fotogramas): lo descarto');return nj()}
   for(const v of VJ.filter(x=>jok(x)&&x!==G)){
    try{const ok=vd(await ask(v,fr,P(0)));log('👁 '+v.id+' vio '+fr.length+' fotogramas ('+(v.last||'')+') → '+(ok===false?'NO apto':ok?'apto':'sin veredicto'));if(ok!=null)return ok}
@@ -541,7 +559,7 @@ async function getMedia(s,k){
    if(i==null&&$('chk').checked&&!s._r&&q===s.q)log('⚠ escena sin verificar por el juez: revisa esta imagen ('+(s.n||'').slice(0,40)+'…)');
    for(const m of(i==null?cs:[cs[i],...cs.filter((_,j)=>j!==i)]).filter(okf).slice(0,3)){
     const uk=ukey(m.url);
-    try{if(!okf(m))continue;used.add(uk);const cl=vclip[uk];
+    try{if(!okf(m))continue;used.add(uk);s._cs=null;const cl=vclip[uk];
     if(m.t==='vid')log((cl?'♻ otro tramo de un clip ya usado: ':'⬇ probando clip: ')+m.p);
     const r=cl?await vidFromBlob(cl.blob,m):await load(m);r.uk=uk;
     if(m.t==='vid'){
@@ -558,6 +576,7 @@ async function getMedia(s,k){
     if(hh&&usedH.some(x=>hd(x,hh)<=9)){log('↺ casi idéntica a otra ya usada: la salto ('+m.p+')');if(r.v)r.v.remove();continue}
     if(hh)usedH.push(hh);
     if(r._seg&&vclip[uk]){vclip[uk].segs.push(r._seg);r.seg=r._seg}delete r._seg;
+    r.judge=s._jby?{by:s._jby,score:(m.t==='vid'&&s._cs!=null)?s._cs:(s._lsc&&s._lsc.has(m)?s._lsc.get(m):null),thr:LJ.thr}:{by:'',score:null,thr:LJ.thr};
     return r}
     catch(e){log('✗ '+m.p+': '+em(e));if(m.t==='vid'&&/timeout/.test(e.message)){tmo[m.p]=(tmo[m.p]||0)+1;if(tmo[m.p]>=3)deadS.add(m.p)}}
    }
@@ -887,12 +906,14 @@ async function getMediaFull(s,k){
  return m;
 }
 // ---------- Panel de escenas: miniaturas, otras opciones y candado ----------
+const jtxt=j=>!j?'':(j.by?(j.by==='local'?'🧠 local':'☁ '+j.by)+(j.score!=null?' '+(+j.score).toFixed(2):'')+(j.by==='local'&&j.score!=null&&j.score<j.thr?' (mejor disponible, revísala)':' ✓'):'⚠ sin juez: no verificada'),jcol=j=>!j||!j.by?'#c60':(j.score!=null&&j.score<j.thr?'#d90':'#2a7');
 const escH=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function tileThumb(src){try{const sw=src.videoWidth||src.width,sh=src.videoHeight||src.height;if(!sw||!sh)return null;const c=document.createElement('canvas'),k=Math.min(1,180/Math.max(sw,sh));c.width=Math.max(1,sw*k|0);c.height=Math.max(1,sh*k|0);c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.6)}catch(_){return null}}
 function tileHTML(s,i){
  const th=s.c?null:tileThumb((s.v&&s.v.videoWidth&&s.v.readyState>=2)?s.v:(s.img||s.fb)),BT='padding:3px 7px;font-size:11px;margin:3px 3px 0 0';
  return '<div style="position:relative;aspect-ratio:16/9;background:#000;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:#fff">'+(th?'<img src="'+th+'" style="width:100%;height:100%;object-fit:cover">':'<span style="font-size:20px">'+(s.c?'📊':'🎞')+'</span>')
   +'<b style="position:absolute;left:5px;top:2px;text-shadow:0 0 3px #000">'+(i+1)+'</b>'+(s.alt?'<b style="position:absolute;right:5px;top:2px;font-size:10px;text-shadow:0 0 3px #000">2 planos</b>':'')+'</div>'
+  +(!s.c&&s.m&&s.m.judge?'<div style="font-weight:700;color:'+jcol(s.m.judge)+'">'+escH(jtxt(s.m.judge))+'</div>':'')
   +'<div style="height:2.7em;overflow:hidden;margin:3px 0;line-height:1.3">'+escH(s.n.slice(0,70))+'</div>'
   +(s.c?'<small>gráfica</small>':'<button class="s" data-act="alt" data-i="'+i+'" style="'+BT+'">↻ opciones</button><button class="s" data-act="lock" data-i="'+i+'" title="Con candado, el director IA no cambia esta escena" style="'+BT+'">'+(s.locked?'🔒':'🔓')+'</button>');
 }
@@ -942,7 +963,7 @@ function drawM(s,t,i){
 $('go').onclick=async()=>{
  const topic=$('topic').value.trim();if(!topic)return;
  title=cleanTitle(topic).slice(0,60);cancel=false;ctx.resume();keepOn();
- $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();JW=0;for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS,strikeS].forEach(o=>{for(const k in o)delete o[k]});prog(0);
+ $('go').disabled=true;$('sk').disabled=true;$('play').disabled=$('rec').disabled=true;$('log').textContent='';scenes=[];[deadT,deadI,deadS,deadA,used].forEach(s=>s.clear());deadV=0;usedH.length=0;deadJ.clear();JW=0;for(const k in coolJ)delete coolJ[k];VJ.forEach(v=>v.f=0);[vclip,tmo,coolS,strikeS,mCool,mFl].forEach(o=>{for(const k in o)delete o[k]});prog(0);
   const words=wcount(topic);let mode=$('nmode').value;if(mode==='auto')mode=words>=20?'guion':'tema';
   title=cleanTitle(mode==='tema'?topic:topic.split(/(?<=[.!?])\s|\n/)[0]).slice(0,60);
   log('📝 Modo del texto: '+({guion:'has puesto tu narración: se usa EXACTAMENTE como la escribiste, la IA solo pone voz, imágenes y efectos',tema:'solo un tema: la IA escribe la narración'})[mode]+(mode!==$('nmode').value&&$('nmode').value==='auto'?' (automático; cámbialo en «Mi texto es…» si no es lo que querías)':''));
@@ -992,7 +1013,7 @@ $('go').onclick=async()=>{
    $('gui').value.split('\n').forEach(l=>{const m=l.match(/^\s*(\d+)\.\s*(.+)$/);if(m&&scenes[m[1]-1]){const sc=scenes[m[1]-1],nt=m[2].trim();if(nt!==sc.n){sc.n=nt;sc.n2='';sc.q3=''}}});showGui()}
   log('Buscando imágenes/video y generando voz…');
   let idx=0,done=0;
-  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMediaFull(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}`)}};
+  const worker=async()=>{while(idx<scenes.length&&!cancel){const k=idx++,s=scenes[k];s.m=await getMediaFull(s,k+Date.now()%1000);done++;prog(0.2+0.4*done/scenes.length);log(`escena ${done}/${scenes.length} ✓ ${s.c?'gráfica':s.m.credit||'imagen IA'}${s.m&&s.m.judge?' · '+jtxt(s.m.judge):''}`)}};
   await Promise.all([worker(),worker()]);
   if(cancel)throw new Error('Cancelado');
   if($('dir').checked&&$('chk').checked)try{log('🎬 El director revisa el montaje…');await director()}catch(e){log('ℹ director omitido: '+em(e))}
@@ -1299,9 +1320,18 @@ $('sk').onchange=()=>{drag=false;if(rc)return;const t=$('sk').value/1000*DUR();p
 $('rec').onclick=()=>{if(recBusy||rc||playing){log('Ya hay una reproducción o grabación en curso. Pulsa ■ Parar si quieres cancelarla.');return}$('rec').disabled=true;log('Grabando… dura lo mismo que el vídeo. NO cierres ni cambies de app ni bloquees la pantalla hasta que termine.');run(true).then(()=>{if(!recBusy)log('Fin de la exportación: si hay vídeo, pulsa «Guardar vídeo» debajo del botón de exportar.')})};
 $('stop').onclick=()=>{keepOff();contR&&contR();stopF=true;cancel=true;log('Detenido.');$('go').disabled=false};
 
+// Botón para copiar el registro entero
+$('log').insertAdjacentHTML('beforebegin','<button class="s" id="lcp" type="button" style="margin:0 0 6px 0">📋 Copiar registro</button>');
+$('lcp').onclick=async()=>{
+ const t=$('log').textContent;let ok=false;
+ try{await navigator.clipboard.writeText(t);ok=true}catch(_){
+  try{const a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;left:0;top:0;opacity:0';document.body.appendChild(a);a.focus();a.select();a.setSelectionRange(0,t.length);ok=document.execCommand('copy');a.remove()}catch(__){}}
+ const b=$('lcp'),o='📋 Copiar registro';b.textContent=ok?'✓ Copiado ('+t.split('\n').length+' líneas)':'No se pudo copiar';setTimeout(()=>b.textContent=o,2000)};
+
 // ---------- Juez local gratis: CLIP en el navegador (sin claves ni cuotas) ----------
 // Compara cada imagen con la descripción de la escena. Solo entra cuando los jueces en la nube no pueden. Si falla la descarga, la app sigue como antes.
-const LJ={st:0,thr:.25,pr:null,fails:0,
+const bmB64=bm=>{const c=document.createElement('canvas');c.width=384;c.height=Math.max(8,Math.round(384*bm.height/bm.width));c.getContext('2d').drawImage(bm,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.7).split(',')[1]};
+const LJ={st:0,thr:.24,floor:.2,pr:null,fails:0,
  on(){const e=$('lcj');return !!e&&e.checked&&this.st!==-1},
  async init(){
   if(this.st===2)return true;if(this.st===-1)return false;if(this.pr)return this.pr;
@@ -1320,15 +1350,15 @@ const LJ={st:0,thr:.25,pr:null,fails:0,
  async imgs(b64s){const r=[];for(const b of b64s){const im=await this.T.RawImage.read('data:image/jpeg;base64,'+b),o=await this.vm(await this.proc(im));r.push(this.nz(o.image_embeds.data))}return r},
  txts(s){return [s.i,s.w||s.q].filter(Boolean).map(x=>String(x).slice(0,200))},
  async scores(s,b64s,T){const te=await this.text(T||this.txts(s)),ie=await this.imgs(b64s);return ie.map(e=>te.reduce((a,t)=>a+this.dot(e,t),0)/te.length)},
- async rank(s,th,cs){
+ async rank(s,th,cs,len){
   try{if(!(await this.init()))return null;const sub=th.slice(0,9);if(!sub.length||!this.txts(s).length)return null;
-   const sc=await this.scores(s,sub.map(x=>x.d));let b=0;sc.forEach((v,i)=>{if(v>sc[b])b=i});const ok=sc[b]>=this.thr;
-   log('🧠 juez local: '+sc.map(x=>x.toFixed(2)).join(' ')+' → '+(ok?'imagen '+b:'ninguna encaja (mínimo '+this.thr+')'));this.fails=0;
+   const sc=await this.scores(s,sub.map(x=>x.d));let b=0;sc.forEach((v,i)=>{if(v>sc[b])b=i});const mn=len?this.floor:this.thr,ok=sc[b]>=mn;s._lsc=new Map(sub.map((x,k)=>[cs[x.i],sc[k]]));if(ok)s._jby='local';
+   log('🧠 juez local: '+sc.map(x=>x.toFixed(2)).join(' ')+' → '+(ok?'imagen '+b+(len&&sc[b]<this.thr?' (la mejor disponible, revísala)':''):'ninguna encaja (mínimo '+mn+')'));this.fails=0;
    return ok?sub[b].i:-1
   }catch(e){log('ℹ juez local falló: '+em(e));if(++this.fails>=3)this.st=-1;return null}},
  async clip(s,frs){
   try{if(!(await this.init())||!frs.length||!this.txts(s).length)return null;
-   const sc=await this.scores(s,frs),m=sc.reduce((a,x)=>a+x,0)/sc.length,ok=m>=this.thr;
+   const sc=await this.scores(s,frs),m=sc.reduce((a,x)=>a+x,0)/sc.length,ok=m>=this.thr;s._cs=m;
    log('🧠 juez local vio '+frs.length+' fotogramas ('+sc.map(x=>x.toFixed(2)).join(' ')+') → '+(ok?'apto':'NO apto'));this.fails=0;return ok
   }catch(e){log('ℹ juez local falló: '+em(e));if(++this.fails>=3)this.st=-1;return null}}
 };
@@ -1367,7 +1397,7 @@ async function scPack(s,gen,done){
  for(const k in s){if(skip.includes(k))continue;const v=s[k];if(v==null||typeof v==='function')continue;if(typeof v==='object'&&!Array.isArray(v)&&v.constructor!==Object)continue;try{o[k]=JSON.parse(JSON.stringify(v))}catch(_){}}
  o.__m=await mPack(s,s.m&&s.m.credit,s.m&&s.m.uk,gen,done);
  o.__alt=s.alt?await mPack(s.alt,s.alt.credit,s.alt.uk,gen,done):null;
- o.__a=abPack(s.a);o.__ab=abPack(s.ab);return o}
+ o.__a=abPack(s.a);o.__ab=abPack(s.ab);o.__j=(s.m&&s.m.judge)||null;return o}
 async function mUnpack(r,gen){
  if(!r)return null;const o={credit:r.credit,vs:r.vs||0,fx:r.fx==null?undefined:r.fx,lazy:r.lazy?1:0};
  if(r.img){o.img=await createImageBitmap(r.img);o.sal=sal(o.img,o.img.width,o.img.height)}
@@ -1402,7 +1432,7 @@ async function projLoad(){
   const i=a+j,raw=await PDB.get(meta.gen+':s:'+i);if(!raw)throw new Error('Falta la escena '+(i+1)+' en el proyecto guardado');
   const s={};for(const k in raw)if(!k.startsWith('__'))s[k]=raw[k];
   s.a=abUnpack(raw.__a);s.ab=abUnpack(raw.__ab);const m=(await mUnpack(raw.__m,meta.gen))||{credit:''};m.alt=await mUnpack(raw.__alt,meta.gen);
-  if(raw.__m&&raw.__m.vk)m.uk=raw.__m.vk;s.m=m;arr[i]=s}));prog(0.1+0.8*Math.min(1,(a+4)/meta.n))}
+  if(raw.__m&&raw.__m.vk)m.uk=raw.__m.vk;if(raw.__j)m.judge=raw.__j;s.m=m;arr[i]=s}));prog(0.1+0.8*Math.min(1,(a+4)/meta.n))}
  scenes=arr;PGEN=meta.gen;
  let t=INTRO();scenes.forEach(s=>{s.alt=s.m.alt||null;s.v=s.m.v;s.img=s.m.img;s.sal=s.m.sal;s.fb=s.m.fb;s.lazy=s.m.lazy;s.vs=s.m.vs||0;s.fx=s.m.fx;s.dur=(s.a?s.a.duration:s.n.split(/\s+/).length/WPS())+0.3+(s.p||0);s.st=t;t+=s.dur;setRate(s)});
  scenes.forEach(s=>{if(s.v&&s.vs)try{s.v.currentTime=s.vs}catch(_){}});credits();
